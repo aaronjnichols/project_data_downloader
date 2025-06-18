@@ -1,0 +1,1 @@
+# Core package for multi-source geospatial data downloader 

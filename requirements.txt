@@ -1,0 +1,30 @@
+# Multi-Source Geospatial Data Downloader Requirements
+# ===================================================
+
+# Core geospatial libraries
+geopandas>=0.12.0
+shapely>=1.8.0
+pyproj>=3.4.0
+rasterio>=1.3.0
+fiona>=1.8.0
+
+# HTTP and data downloading
+requests>=2.28.0
+urllib3>=1.26.0
+
+# Configuration and data handling
+PyYAML>=6.0
+python-dateutil>=2.8.0
+
+# Optional: for better performance and additional formats
+# Uncomment as needed:
+# cartopy>=0.21.0          # For advanced coordinate transformations
+# xarray>=2022.6.0         # For NetCDF/HDF raster processing
+# h5py>=3.7.0              # For HDF5 files
+# netcdf4>=1.6.0           # For NetCDF files
+# laspy>=2.3.0             # For LAS/LAZ LiDAR files (future USGS LiDAR support)
+
+# Development and testing (optional)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=5.0.0 

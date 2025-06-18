@@ -1,0 +1,66 @@
+# Global Configuration for Multi-Source Geospatial Data Downloader
+# ================================================================
+
+# Application Settings
+application:
+  name: "Multi-Source Geospatial Data Downloader"
+  version: "1.0.0"
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# Default Output Settings
+output:
+  base_directory: "./output"
+  create_project_folders: true
+  preserve_original_files: false
+  
+# Download Settings
+download:
+  max_retries: 3
+  timeout_seconds: 60
+  chunk_size: 8192
+  max_concurrent_downloads: 3
+  
+# Data Processing Settings
+processing:
+  validate_geometries: true
+  fix_invalid_geometries: true
+  reproject_to_common_crs: true
+  common_crs: "EPSG:4326"
+  clip_to_aoi: true
+  
+# AOI Settings
+aoi:
+  buffer_percent: 0.0  # Add buffer around AOI (percentage)
+  validate_size: true
+  max_area_km2: 10000  # Maximum AOI area in square kilometers
+  min_area_km2: 0.01   # Minimum AOI area in square kilometers
+
+# Data Source Specific Settings
+data_sources:
+  fema:
+    enabled: true
+    prefer_wfs: true      # Try WFS before REST API
+    include_metadata: true
+    
+  usgs_lidar:
+    enabled: false        # Will be implemented in future phases
+    preferred_format: "LAZ"
+    include_dem: true
+    
+  nlcd:
+    enabled: false        # Will be implemented in future phases
+    default_year: 2019
+    products: ["landcover", "impervious"]
+    
+  nrcs_soils:
+    enabled: false        # Will be implemented in future phases
+    detail_level: "ssurgo"
+    include_tables: true
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_logging: true
+  console_logging: true
+  log_file_name: "downloader.log" 

@@ -1,0 +1,54 @@
+# Project Configuration Template
+# Copy this file and customize for your specific project
+# =====================================================
+
+project:
+  name: "My Project"
+  description: "Description of the project and data requirements"
+  aoi_file: "data/aoi.shp"  # Path to AOI shapefile
+  output_directory: "./output"
+
+# Data sources to download (set enabled: true for sources you want)
+data_sources:
+  fema:
+    enabled: true
+    layers: "all"  # "all" or list of specific layer IDs ["28", "16", "14"]
+    config:
+      max_retries: 3
+      timeout: 60
+      prefer_wfs: true
+  
+  # Future data sources (not yet implemented)
+  usgs_lidar:
+    enabled: false
+    data_types: ["lidar", "dem"]
+    resolution: "highest_available"
+    config:
+      max_file_size_gb: 5.0
+  
+  nlcd:
+    enabled: false
+    years: [2019, 2016]  # Available years
+    products: ["landcover", "impervious", "canopy"]
+    config:
+      clip_to_aoi: true
+  
+  nrcs_soils:
+    enabled: false
+    detail_level: "ssurgo"  # "ssurgo" or "statsgo2"
+    include_tables: true
+    config:
+      include_interpretations: true
+
+# Processing options
+processing:
+  clip_to_aoi: true
+  validate_geometries: true
+  reproject_to_common_crs: false  # Keep original CRS
+  create_summary_report: true
+  
+# Output organization
+output:
+  organize_by_source: true
+  create_metadata: true
+  compress_outputs: false 
