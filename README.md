@@ -172,10 +172,11 @@ class MyDataDownloader(BaseDownloader):
 - **geopandas**: Spatial data processing
 - **requests**: HTTP downloads with retry logic
 - **PyYAML**: Configuration file parsing
-- **rasterio**: Raster data processing
+- **rasterio**: Raster data processing (including DEM handling)
 - **shapely**: Geometric operations
+- **scikit-image**: Contour generation from DEM data (GDAL-free solution)
 
-See `requirements.txt` for complete list.
+See `requirements.txt` for complete list. No external GIS software (GDAL, QGIS) required.
 
 ## Troubleshooting
 

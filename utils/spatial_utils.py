@@ -262,26 +262,119 @@ def safe_file_name(name: str) -> str:
     
     return safe_name.strip('_') 
 def dem_to_contours(dem_path: str, output_path: str, interval: float) -> bool:
-    """Convert a DEM raster to contour lines using gdal_contour."""
+    """
+    Convert a DEM raster to contour lines using pure Python libraries.
+    
+    Uses rasterio for raster I/O, skimage for contour generation, and 
+    shapely/geopandas for geometry handling - no GDAL dependency required.
+    
+    Args:
+        dem_path: Path to input DEM raster file
+        output_path: Path for output contour shapefile
+        interval: Contour interval in the same units as the DEM
+        
+    Returns:
+        True if successful, False otherwise
+    """
     try:
-        import subprocess
-
+        import numpy as np
+        from skimage import measure
+        from shapely.geometry import LineString
+        import pandas as pd
+        
+        # Create output directory if needed
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        cmd = [
-            "gdal_contour",
-            "-i",
-            str(interval),
-            dem_path,
-            output_path,
-        ]
-        subprocess.run(cmd, check=True)
-        logger.info(f"Generated contours at {output_path} (interval {interval})")
-        return True
-    except FileNotFoundError:
-        logger.error("gdal_contour command not found. Install GDAL to generate contours")
-        return False
-    except subprocess.CalledProcessError as e:
-        logger.error(f"gdal_contour failed: {e}")
+        
+        logger.info(f"Generating contours from {dem_path} with {interval} unit interval")
+        
+        # Read the DEM raster
+        with rasterio.open(dem_path) as src:
+            # Read the elevation data
+            elevation = src.read(1)
+            transform = src.transform
+            crs = src.crs
+            
+            # Handle nodata values
+            if src.nodata is not None:
+                elevation = np.where(elevation == src.nodata, np.nan, elevation)
+            
+            # Get elevation range and create contour levels
+            valid_elevations = elevation[~np.isnan(elevation)]
+            if len(valid_elevations) == 0:
+                logger.error("No valid elevation data found in DEM")
+                return False
+                
+            min_elev = np.nanmin(valid_elevations)
+            max_elev = np.nanmax(valid_elevations)
+            
+            # Create contour levels based on interval
+            # Round to nearest interval and create levels
+            start_level = np.ceil(min_elev / interval) * interval
+            end_level = np.floor(max_elev / interval) * interval
+            levels = np.arange(start_level, end_level + interval, interval)
+            
+            if len(levels) == 0:
+                logger.warning(f"No contour levels found for interval {interval} between {min_elev:.2f} and {max_elev:.2f}")
+                return False
+            
+            logger.info(f"Generating {len(levels)} contour levels from {start_level:.1f} to {end_level:.1f}")
+            
+            # Generate contours using skimage
+            contours = []
+            elevations = []
+            
+            for level in levels:
+                try:
+                    # Generate contour lines for this elevation
+                    contour_lines = measure.find_contours(elevation, level)
+                    
+                    for contour in contour_lines:
+                        # Convert pixel coordinates to geographic coordinates
+                        # contour is in (row, col) format, need to convert to (x, y)
+                        if len(contour) < 2:
+                            continue  # Skip contours with too few points
+                            
+                        # Transform from pixel coordinates to geographic coordinates
+                        geo_coords = []
+                        for row, col in contour:
+                            x, y = rasterio.transform.xy(transform, row, col)
+                            geo_coords.append((x, y))
+                        
+                        # Create LineString geometry
+                        if len(geo_coords) >= 2:
+                            line = LineString(geo_coords)
+                            contours.append(line)
+                            elevations.append(level)
+                            
+                except Exception as e:
+                    logger.warning(f"Error generating contour for level {level}: {e}")
+                    continue
+            
+            if len(contours) == 0:
+                logger.warning("No valid contours generated")
+                return False
+            
+            # Create GeoDataFrame
+            gdf = gpd.GeoDataFrame({
+                'elevation': elevations,
+                'geometry': contours
+            }, crs=crs)
+            
+            # Add additional attributes
+            gdf['contour_id'] = range(len(gdf))
+            gdf['interval'] = interval
+            
+            # Save to shapefile
+            gdf.to_file(output_path)
+            
+            logger.info(f"Generated {len(contours)} contour lines saved to: {output_path}")
+            logger.info(f"Elevation range: {min(elevations):.1f} to {max(elevations):.1f}")
+            
+            return True
+            
+    except ImportError as e:
+        logger.error(f"Missing required library for contour generation: {e}")
+        logger.error("Please install scikit-image: pip install scikit-image")
         return False
     except Exception as e:
         logger.error(f"Error generating contours: {e}")
