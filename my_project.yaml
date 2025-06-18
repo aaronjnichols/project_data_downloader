@@ -19,7 +19,7 @@ data_sources:
   
   # Future data sources (to be implemented)
   usgs_lidar:
-    enabled: false
+    enabled: true
     layers: ["dem"]
     config:
       contour_interval: 10  # Generate 10m contours from DEM
