@@ -20,10 +20,11 @@ data_sources:
   # Future data sources (to be implemented)
   usgs_lidar:
     enabled: false
-    data_types: ["lidar", "dem"]
-    resolution: "highest_available"
+    layers: ["dem"]
     config:
-      max_file_size_gb: 5.0
+      contour_interval: 10  # Generate 10m contours from DEM
+      max_retries: 3
+      timeout: 60
   
   nlcd:
     enabled: false

@@ -261,3 +261,28 @@ def safe_file_name(name: str) -> str:
         safe_name = safe_name.replace('__', '_')
     
     return safe_name.strip('_') 
+def dem_to_contours(dem_path: str, output_path: str, interval: float) -> bool:
+    """Convert a DEM raster to contour lines using gdal_contour."""
+    try:
+        import subprocess
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        cmd = [
+            "gdal_contour",
+            "-i",
+            str(interval),
+            dem_path,
+            output_path,
+        ]
+        subprocess.run(cmd, check=True)
+        logger.info(f"Generated contours at {output_path} (interval {interval})")
+        return True
+    except FileNotFoundError:
+        logger.error("gdal_contour command not found. Install GDAL to generate contours")
+        return False
+    except subprocess.CalledProcessError as e:
+        logger.error(f"gdal_contour failed: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Error generating contours: {e}")
+        return False

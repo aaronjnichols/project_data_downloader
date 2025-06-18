@@ -26,7 +26,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from .usgs_lidar_downloader import USGSLidarDownloader
+    register_downloader("usgs_lidar", USGSLidarDownloader)
+except ImportError:
+    pass
+
 # Future downloaders will be imported here
-# from .usgs_lidar_downloader import USGSLidarDownloader
 # from .nlcd_downloader import NLCDDownloader
-# from .nrcs_soils_downloader import NRCSSoilsDownloader 
+# from .nrcs_soils_downloader import NRCSSoilsDownloader

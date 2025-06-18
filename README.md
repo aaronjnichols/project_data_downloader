@@ -13,9 +13,9 @@ A Python application for automatically downloading geospatial data from multiple
   - Levees
   - FIRM Panels
   - And 25+ additional flood-related layers
+- **USGS LiDAR** - 3DEP digital elevation models with optional contour generation
 
 ### Planned Data Sources (Future Releases)
-- **USGS LiDAR** (3DEP program)
 - **NLCD** (National Land Cover Database)
 - **NRCS Soils** (SSURGO/STATSGO2)
 
@@ -97,6 +97,11 @@ data_sources:
     config:
       max_retries: 3
       timeout: 60
+  usgs_lidar:
+    enabled: false
+    layers: ["dem"]
+    config:
+      contour_interval: 10
 ```
 
 ### Global Settings (`config/settings.yaml`)
@@ -130,7 +135,7 @@ The application uses a plugin architecture where each data source is implemented
 ├── core/                    # Base classes and utilities
 ├── downloaders/             # Data source plugins
 │   ├── fema_downloader.py
-│   ├── usgs_lidar_downloader.py  # (future)
+│   ├── usgs_lidar_downloader.py
 │   └── nlcd_downloader.py        # (future)
 ├── utils/                   # Utility functions
 └── config/                  # Configuration files
@@ -209,10 +214,9 @@ logging:
 2. Install development dependencies: `pip install -r requirements.txt`
 3. Follow the plugin architecture for new data sources
 
-### Future Enhancements
+ ### Future Enhancements
 
-- USGS LiDAR downloader
-- NLCD raster data support  
+- NLCD raster data support
 - NRCS soils data integration
 - Enhanced error handling and retry logic
 - Progress bars for large downloads
