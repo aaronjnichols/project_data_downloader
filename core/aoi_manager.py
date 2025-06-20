@@ -182,6 +182,86 @@ class AOIManager:
             logger.error(f"Error calculating area: {e}")
             return None
     
+    def get_centroid(self) -> Optional[Tuple[float, float]]:
+        """
+        Get the centroid coordinates of the AOI in EPSG:4326
+        
+        Returns:
+            Tuple of (longitude, latitude) or None if no AOI loaded
+        """
+        if self.aoi_gdf is None:
+            logger.error("No AOI loaded")
+            return None
+        
+        try:
+            # Calculate centroid of the union of all geometries
+            # This handles both single and multi-feature AOIs
+            union_geom = self.aoi_gdf.geometry.unary_union
+            centroid_geom = union_geom.centroid
+            
+            logger.info(f"AOI centroid: ({centroid_geom.x:.6f}, {centroid_geom.y:.6f})")
+            return (centroid_geom.x, centroid_geom.y)
+            
+        except Exception as e:
+            logger.error(f"Error calculating centroid: {e}")
+            return None
+    
+    def get_centroid_geom(self):
+        """
+        Get the centroid as a Shapely Point geometry in EPSG:4326
+        
+        Returns:
+            Shapely Point geometry or None if no AOI loaded
+        """
+        if self.aoi_gdf is None:
+            return None
+        
+        try:
+            from shapely.geometry import Point
+            centroid_coords = self.get_centroid()
+            if centroid_coords:
+                return Point(centroid_coords[0], centroid_coords[1])
+            return None
+        except Exception as e:
+            logger.error(f"Error creating centroid geometry: {e}")
+            return None
+    
+    def validate_centroid_coverage(self, lat: float, lon: float) -> bool:
+        """
+        Validate that a centroid coordinate falls within reasonable bounds for NOAA Atlas 14
+        
+        Args:
+            lat: Latitude in decimal degrees
+            lon: Longitude in decimal degrees
+            
+        Returns:
+            True if coordinates are within expected coverage area
+        """
+        # NOAA Atlas 14 covers the contiguous US, Alaska, Hawaii, and territories
+        # Basic validation for continental US bounds
+        conus_bounds = {
+            'lat_min': 24.0,  # Southern Florida
+            'lat_max': 49.0,  # Northern border
+            'lon_min': -125.0,  # West coast
+            'lon_max': -66.0   # East coast
+        }
+        
+        # Check if within CONUS bounds
+        if (conus_bounds['lat_min'] <= lat <= conus_bounds['lat_max'] and 
+            conus_bounds['lon_min'] <= lon <= conus_bounds['lon_max']):
+            return True
+        
+        # Check Alaska bounds (rough approximation)
+        if 54.0 <= lat <= 72.0 and -180.0 <= lon <= -130.0:
+            return True
+        
+        # Check Hawaii bounds (rough approximation)
+        if 18.0 <= lat <= 23.0 and -162.0 <= lon <= -154.0:
+            return True
+        
+        logger.warning(f"Coordinates ({lat:.6f}, {lon:.6f}) may be outside NOAA Atlas 14 coverage area")
+        return False
+    
     def is_loaded(self) -> bool:
         """
         Check if an AOI is currently loaded

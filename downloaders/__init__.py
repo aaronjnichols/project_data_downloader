@@ -32,6 +32,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from .noaa_atlas14_downloader import NOAAAtlas14Downloader
+    register_downloader("noaa_atlas14", NOAAAtlas14Downloader)
+except ImportError:
+    pass
+
 # Future downloaders will be imported here
 # from .nlcd_downloader import NLCDDownloader
 # from .nrcs_soils_downloader import NRCSSoilsDownloader

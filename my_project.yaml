@@ -1,9 +1,9 @@
-# FEMA Multi-Layer Project Configuration
-# ====================================
+# Multi-Source Geospatial Data Download Project
+# ==============================================
 
 project:
-  name: "FEMA NFHL Multi-Layer Download"
-  description: "Download all available FEMA NFHL spatial data layers including flood zones, BFEs, cross-sections, water lines, and related flood hazard data"
+  name: "Multi-Source Data Download with NOAA Atlas 14"
+  description: "Download FEMA flood data, USGS LiDAR, and NOAA Atlas 14 precipitation frequency data with PDF generation"
   aoi_file: "data/aoi.shp"
   output_directory: "./output"
 
@@ -11,20 +11,27 @@ project:
 data_sources:
   fema:
     enabled: true
-    layers: "all"  # Download all 31 available FEMA NFHL layers
+    layers: ["28", "16", "20"]  # Flood zones, BFEs, and stream centerlines for testing
     config:
       max_retries: 3
       timeout: 60
       prefer_wfs: true
   
-  # Future data sources (to be implemented)
   usgs_lidar:
     enabled: true
     layers: ["dem"]
     config:
-      contour_interval: 10  # Generate 10m contours from DEM
+      contour_interval: 10  # Generate 10-foot contours from DEM
       max_retries: 3
       timeout: 60
+  
+  # NOAA Atlas 14 Precipitation Frequency Data with PDF Generation
+  noaa_atlas14:
+    enabled: true
+    layers: ["pds_depth_english", "pds_intensity_english"]  # PDS depth and intensity in English units
+    config:
+      max_retries: 3
+      timeout: 30
   
   nlcd:
     enabled: false
@@ -51,4 +58,10 @@ processing:
 output:
   organize_by_source: true
   create_metadata: true
-  compress_outputs: false 
+  compress_outputs: false
+
+# NOAA Atlas 14 automatically generates:
+# - Raw CSV files (original NOAA API response)
+# - Processed CSV files (clean tabular format)
+# - Metadata JSON files (download parameters and summary)
+# - Professional PDF reports (8.5"x11" with data tables and DDF curves) 

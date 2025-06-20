@@ -181,7 +181,8 @@ def run_download(project_config: Dict, global_config: Dict, dry_run: bool = Fals
                 result = downloader.download_layer(
                     layer_id=layer_id,
                     aoi_bounds=aoi_bounds,
-                    output_path=str(source_output_dir)
+                    output_path=str(source_output_dir),
+                    aoi_gdf=aoi_manager.aoi_gdf
                 )
                 
                 all_results.append(result)
@@ -190,6 +191,24 @@ def run_download(project_config: Dict, global_config: Dict, dry_run: bool = Fals
                     logger.info(f"✓ Successfully downloaded {layer_info.description}")
                     logger.info(f"  Features: {result.feature_count}")
                     logger.info(f"  File: {result.file_path}")
+                    
+                    # Check for additional generated files (like PDF reports)
+                    if hasattr(result, 'metadata') and result.metadata:
+                        # Check for processed CSV
+                        processed_csv = result.file_path.replace('.csv', '_processed.csv')
+                        if os.path.exists(processed_csv):
+                            logger.info(f"  Processed CSV: {os.path.basename(processed_csv)}")
+                        
+                        # Check for PDF report
+                        pdf_report = result.file_path.replace('.csv', '_report.pdf')
+                        if os.path.exists(pdf_report):
+                            file_size = os.path.getsize(pdf_report) / 1024
+                            logger.info(f"  📊 PDF Report: {os.path.basename(pdf_report)} ({file_size:.1f} KB)")
+                        
+                        # Check for metadata
+                        metadata_file = result.file_path.replace('.csv', '_metadata.json')
+                        if os.path.exists(metadata_file):
+                            logger.info(f"  Metadata: {os.path.basename(metadata_file)}")
                 else:
                     logger.error(f"✗ Failed to download {layer_info.description}: {result.error_message}")
         
