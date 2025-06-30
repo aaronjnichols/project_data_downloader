@@ -24,6 +24,12 @@ python-dateutil>=2.8.0
 matplotlib>=3.6.0
 pandas>=1.5.0
 
+# FastAPI and API dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+
 # Optional: for better performance and additional formats
 # Uncomment as needed:
 # cartopy>=0.21.0          # For advanced coordinate transformations

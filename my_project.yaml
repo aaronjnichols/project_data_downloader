@@ -11,7 +11,7 @@ project:
 data_sources:
   fema:
     enabled: true
-    layers: ["28", "16", "20"]  # Flood zones, BFEs, and stream centerlines for testing
+    layers: ["28", "16", "20", "1"]  # Flood zones, BFEs, stream centerlines, and FIRM panels for testing
     config:
       max_retries: 3
       timeout: 60

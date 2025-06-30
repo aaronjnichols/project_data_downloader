@@ -100,6 +100,34 @@ output/
 
 See `docs/ARCHITECTURE.md` for an overview of the plugin-based architecture and instructions for adding new data sources.
 
+## REST API
+
+🆕 **NEW**: This project now includes a REST API for integration with Custom GPT Actions!
+
+### Quick Start API
+
+```bash
+# Install API dependencies
+pip install -r requirements.txt
+
+# Start the API server
+python start_api.py
+
+# Test the API
+python test_api.py
+```
+
+**API Endpoints:**
+- `GET /downloaders` - List available data sources
+- `POST /jobs` - Create download jobs  
+- `GET /jobs/{job_id}` - Monitor job progress
+- `GET /jobs/{job_id}/result` - Download results
+- `GET /openapi.json` - OpenAPI schema for GPT Actions
+
+**For GPT Integration:** Deploy the API and use `https://your-domain.com/openapi.json` as your GPT Action schema URL.
+
+📖 **Full API Documentation:** See `API_README.md` and `docs/API_USAGE.md`
+
 ## Dependencies
 
 - **geopandas**: Spatial data processing
@@ -107,6 +135,8 @@ See `docs/ARCHITECTURE.md` for an overview of the plugin-based architecture and 
 - **PyYAML**: Configuration file parsing
 - **rasterio**: Raster data processing
 - **matplotlib**: PDF report and plot generation
+- **fastapi**: REST API framework
+- **uvicorn**: ASGI server
 
 See `requirements.txt` for a complete list of dependencies. No external GIS software (e.g., GDAL, QGIS) is required.
 
