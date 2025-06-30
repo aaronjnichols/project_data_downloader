@@ -228,4 +228,51 @@ class DataPreviewResponse(BaseModel):
     total_features: int
     sample_geojson: Optional[Dict[str, Any]] = None
     summary: DataSummary
-    download_links: DownloadLinks 
+    download_links: DownloadLinks
+
+
+class UnifiedDataResponse(BaseModel):
+    """Unified text-based response for all data types - GPT optimized"""
+    job_id: str
+    status: str
+    data_type: str  # "geospatial", "precipitation", "elevation"
+    
+    # For GIS data (FEMA, USGS LiDAR)
+    geojson: Optional[Dict[str, Any]] = None
+    
+    # For NOAA precipitation data
+    rainfall_data: Optional[Dict[str, Any]] = None
+    
+    # For elevation/terrain data
+    elevation_data: Optional[Dict[str, Any]] = None
+    
+    # Common metadata
+    metadata: Dict[str, Any]
+    location: Dict[str, Any]  # bounds, coordinates, place name
+    
+    # Instructions for GPT on how to use this data
+    usage_instructions: str
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "job_id": "abc123",
+                "status": "completed",
+                "data_type": "geospatial",
+                "geojson": {
+                    "type": "FeatureCollection",
+                    "features": [{"type": "Feature", "geometry": {...}, "properties": {...}}]
+                },
+                "metadata": {
+                    "feature_count": 150,
+                    "layers": ["flood_zones", "elevation"],
+                    "data_sources": ["FEMA NFHL"]
+                },
+                "location": {
+                    "bounds": {"minx": -105.3, "miny": 39.9, "maxx": -105.1, "maxy": 40.1},
+                    "center": {"lat": 40.0, "lon": -105.2},
+                    "place_name": "Boulder, CO"
+                },
+                "usage_instructions": "This GeoJSON data can be used directly with geopandas..."
+            }
+        } 

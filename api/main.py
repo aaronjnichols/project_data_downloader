@@ -23,7 +23,7 @@ from api.models import (
     JobRequest, JobResponse, JobStatusResponse, 
     DownloaderInfo, LayerInfo, PreviewRequest, PreviewResponse,
     ErrorResponse, AOIBounds, APIInfoResponse, DownloadersResponse, LayersResponse,
-    GPTDataResponse, DataPreviewResponse, DataSummary, DownloadLinks
+    GPTDataResponse, DataPreviewResponse, DataSummary, DownloadLinks, UnifiedDataResponse
 )
 from api.job_manager import job_manager, JobStatus
 from downloaders import get_downloader, list_downloaders
@@ -251,18 +251,13 @@ async def get_job_status(job_id: str):
             "total_features": total_features,
             "success_rate": successful / len(results) if results else 0,
             "has_download": has_download,
+            # Primary GPT endpoint (pure text/JSON data)
+            "data_url": f"/jobs/{job_id}/data" if has_download else None,
+            # Legacy endpoints (still available)
             "download_url": f"/jobs/{job_id}/result" if has_download else None,
             "download_info_url": f"/jobs/{job_id}/download-info" if has_download else None,
-            # GPT-optimized endpoints
-            "gpt_data_url": f"/jobs/{job_id}/data" if has_download else None,
             "summary_url": f"/jobs/{job_id}/summary" if has_download else None,
-            "preview_url": f"/jobs/{job_id}/preview" if has_download else None,
-            # Export endpoints
-            "export_urls": {
-                "geojson": f"/jobs/{job_id}/export/geojson" if has_download else None,
-                "shapefile": f"/jobs/{job_id}/export/shapefile" if has_download else None,
-                "pdf": f"/jobs/{job_id}/export/pdf" if has_download else None
-            }
+            "preview_url": f"/jobs/{job_id}/preview" if has_download else None
         }
     
     return JobStatusResponse(
@@ -331,7 +326,53 @@ async def download_job_result(job_id: str):
         raise HTTPException(status_code=500, detail=f"Error serving file: {str(e)}")
 
 
-@app.get("/jobs/{job_id}/data", response_model=GPTDataResponse)
+@app.get("/jobs/{job_id}/data", response_model=UnifiedDataResponse)
+async def get_job_data_unified(job_id: str):
+    """Get unified text-based data for GPT consumption - pure JSON response"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data["status"] != JobStatus.COMPLETED.value:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Job is not completed. Current status: {job_data['status']}"
+            )
+        
+        # Get unified data (text-based only)
+        unified_data = job_manager.get_unified_data(job_id)
+        if not unified_data:
+            raise HTTPException(status_code=404, detail="No processable data found for this job")
+        
+        # Create unified response
+        response = UnifiedDataResponse(
+            job_id=job_id,
+            status="completed",
+            data_type=unified_data["data_type"],
+            metadata=unified_data["metadata"],
+            location=unified_data["location"],
+            usage_instructions=unified_data["usage_instructions"]
+        )
+        
+        # Add data based on type
+        if unified_data["data_type"] == "geospatial":
+            response.geojson = unified_data["geojson"]
+        elif unified_data["data_type"] == "precipitation":
+            response.rainfall_data = unified_data["rainfall_data"]
+        elif unified_data["data_type"] == "elevation":
+            response.elevation_data = unified_data.get("elevation_data")
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting unified data for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/jobs/{job_id}/data-legacy", response_model=GPTDataResponse)
 async def get_job_data_gpt_optimized(job_id: str, format: Optional[str] = None):
     """Get GPT-optimized data for a completed job"""
     try:
