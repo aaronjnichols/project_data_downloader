@@ -261,11 +261,11 @@ class UnifiedDataResponse(BaseModel):
                 "data_type": "geospatial",
                 "geojson": {
                     "type": "FeatureCollection",
-                    "features": [{"type": "Feature", "geometry": {...}, "properties": {...}}]
+                    "features": []
                 },
                 "metadata": {
                     "feature_count": 150,
-                    "layers": ["flood_zones", "elevation"],
+                    "layers": [{"name": "flood_zones", "feature_count": 150}],
                     "data_sources": ["FEMA NFHL"]
                 },
                 "location": {
