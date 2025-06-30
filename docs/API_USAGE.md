@@ -297,11 +297,11 @@ The API now includes specialized endpoints designed for Custom GPT Actions that 
 
 ### Primary GPT Endpoint
 
-**`GET /jobs/{job_id}/data`** - Smart data delivery
-- **Small datasets** (< 500KB): Returns complete GeoJSON data
-- **Medium datasets** (500KB - 5MB): Returns summary + sample GeoJSON
-- **Large datasets** (> 5MB): Returns summary + download links only
-- Always includes download links for all formats
+**`GET /jobs/{job_id}/data`** - Unified text-based data delivery
+- **GIS Data** (FEMA, USGS LiDAR): Returns clean GeoJSON (max 2000 features)
+- **NOAA Data**: Returns structured precipitation dictionaries
+- **Pure JSON response** - no binary files, no download links
+- **GPT-ready format** with usage instructions
 
 ### Additional GPT Endpoints
 
@@ -313,39 +313,186 @@ The API now includes specialized endpoints designed for Custom GPT Actions that 
 
 ### Response Format Examples
 
-#### Small Dataset Response
+#### Geospatial Data (FEMA/USGS)
 ```json
 {
   "job_id": "abc123",
   "status": "completed",
-  "data_size": "small",
-  "response_type": "geojson",
+  "data_type": "geospatial",
   "geojson": {
     "type": "FeatureCollection",
-    "features": [...]
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {"type": "Polygon", "coordinates": [...]},
+        "properties": {
+          "OBJECTID": 1,
+          "STUDY_ID": "12345",
+          "layer_source": "flood_zones"
+        }
+      }
+    ]
   },
-  "download_links": {
-    "geojson": "/jobs/abc123/export/geojson",
-    "shapefile": "/jobs/abc123/export/shapefile",
-    "original_zip": "/jobs/abc123/result"
+  "metadata": {
+    "feature_count": 150,
+    "layers": [{"name": "flood_zones", "feature_count": 150}],
+    "data_sources": ["fema"],
+    "coordinate_system": "EPSG:4326"
   },
-  "instructions": "This dataset is small enough to be included directly as GeoJSON..."
+  "location": {
+    "bounds": {"minx": -105.3, "miny": 39.9, "maxx": -105.1, "maxy": 40.1},
+    "center": {"lat": 40.0, "lon": -105.2},
+    "place_name": "Northern US (Western)"
+  },
+  "usage_instructions": "This GeoJSON contains 150 features from 1 layers. You can use this data directly with geopandas: gdf = gpd.GeoDataFrame.from_features(data['geojson']['features']). To create a shapefile: gdf.to_file('output.shp'). To create a CSV of attributes: gdf.drop('geometry', axis=1).to_csv('attributes.csv')."
 }
 ```
 
-#### Large Dataset Response
+#### Precipitation Data (NOAA Atlas 14)
+```json
+{
+  "job_id": "def456",
+  "status": "completed",
+  "data_type": "precipitation",
+  "rainfall_data": {
+    "location": "Phoenix, AZ",
+    "coordinates": [33.4, -112.1],
+    "precipitation_frequencies": {
+      "2_year": {"1_hour": 0.85, "2_hour": 1.12, "6_hour": 1.45, "12_hour": 1.65, "24_hour": 1.85},
+      "5_year": {"1_hour": 1.05, "2_hour": 1.38, "6_hour": 1.78, "12_hour": 2.02, "24_hour": 2.28},
+      "10_year": {"1_hour": 1.20, "2_hour": 1.58, "6_hour": 2.04, "12_hour": 2.32, "24_hour": 2.62},
+      "25_year": {"1_hour": 1.42, "2_hour": 1.87, "6_hour": 2.41, "12_hour": 2.74, "24_hour": 3.10},
+      "50_year": {"1_hour": 1.60, "2_hour": 2.11, "6_hour": 2.72, "12_hour": 3.09, "24_hour": 3.50},
+      "100_year": {"1_hour": 1.80, "2_hour": 2.37, "6_hour": 3.06, "12_hour": 3.48, "24_hour": 3.94}
+    },
+    "units": "inches",
+    "data_source": "NOAA Atlas 14"
+  },
+  "metadata": {
+    "data_source": "NOAA Atlas 14",
+    "layers_requested": ["ams_depth_english"],
+    "units": "inches"
+  },
+  "location": {
+    "bounds": {"minx": -112.2, "miny": 33.3, "maxx": -112.0, "maxy": 33.5},
+    "center": {"lat": 33.4, "lon": -112.1},
+    "place_name": "Phoenix, AZ"
+  },
+  "usage_instructions": "This precipitation frequency data can be used to create charts, tables, or analysis. Use pandas to work with the data: df = pd.DataFrame(data['rainfall_data']['precipitation_frequencies']). To create a CSV: df.to_csv('rainfall_data.csv'). To plot: df.plot(kind='bar')."
+}
+```
+
+### GPT Integration Benefits
+
+1. **Immediate Data Access**: Small datasets available instantly as GeoJSON
+2. **No Binary Issues**: Pure JSON eliminates `ClientResponseError` and `ResponseTooLargeError`
+3. **Code Interpreter Ready**: Data formats work directly with pandas, geopandas
+4. **File Creation on Demand**: GPT can create shapefiles, CSVs, PDFs using Code Interpreter
+5. **Rich Instructions**: Each response includes specific usage guidance
+
+### Custom GPT Workflow
+
+1. **Create Jobs**: Use `POST /jobs` as before
+2. **Monitor Progress**: Use `GET /jobs/{job_id}` 
+3. **Access Data**: Use `GET /jobs/{job_id}/data` (primary endpoint)
+4. **Process Data**: Use received JSON directly with Code Interpreter
+5. **Create Files**: Generate shapefiles, CSVs, charts as needed
+
+## Text-Based Data API for Custom GPT Actions
+
+The API is designed to provide pure text/JSON data for Custom GPT Actions, eliminating binary file issues and enabling immediate data processing within ChatGPT.
+
+### Primary Endpoint
+
+**`GET /jobs/{job_id}/data`** - Unified text-based data delivery
+- **GIS Data** (FEMA, USGS LiDAR): Returns clean GeoJSON (max 2000 features)
+- **NOAA Data**: Returns structured precipitation dictionaries
+- **Pure JSON response** - no binary files, no download links
+- **GPT-ready format** with usage instructions
+
+### Response Examples
+
+#### Geospatial Data (FEMA/USGS)
 ```json
 {
   "job_id": "abc123",
-  "status": "completed", 
-  "data_size": "large",
-  "response_type": "links_only",
-  "summary": {
-    "feature_count": 15000,
-    "bounds": {"minx": -105.3, "miny": 39.9, "maxx": -105.1, "maxy": 40.1},
-    "attribute_summary": {...}
+  "status": "completed",
+  "data_type": "geospatial",
+  "geojson": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {"type": "Polygon", "coordinates": [...]},
+        "properties": {
+          "OBJECTID": 1,
+          "STUDY_ID": "12345",
+          "layer_source": "flood_zones"
+        }
+      }
+    ]
   },
-  "download_links": {...},
-  "instructions": "This large dataset contains 15000 features. Use download links..."
+  "metadata": {
+    "feature_count": 150,
+    "layers": [{"name": "flood_zones", "feature_count": 150}],
+    "data_sources": ["fema"],
+    "coordinate_system": "EPSG:4326"
+  },
+  "location": {
+    "bounds": {"minx": -105.3, "miny": 39.9, "maxx": -105.1, "maxy": 40.1},
+    "center": {"lat": 40.0, "lon": -105.2},
+    "place_name": "Northern US (Western)"
+  },
+  "usage_instructions": "This GeoJSON contains 150 features from 1 layers. You can use this data directly with geopandas: gdf = gpd.GeoDataFrame.from_features(data['geojson']['features']). To create a shapefile: gdf.to_file('output.shp'). To create a CSV of attributes: gdf.drop('geometry', axis=1).to_csv('attributes.csv')."
 }
-``` 
+```
+
+#### Precipitation Data (NOAA Atlas 14)
+```json
+{
+  "job_id": "def456",
+  "status": "completed",
+  "data_type": "precipitation",
+  "rainfall_data": {
+    "location": "Phoenix, AZ",
+    "coordinates": [33.4, -112.1],
+    "precipitation_frequencies": {
+      "2_year": {"1_hour": 0.85, "2_hour": 1.12, "6_hour": 1.45, "12_hour": 1.65, "24_hour": 1.85},
+      "5_year": {"1_hour": 1.05, "2_hour": 1.38, "6_hour": 1.78, "12_hour": 2.02, "24_hour": 2.28},
+      "10_year": {"1_hour": 1.20, "2_hour": 1.58, "6_hour": 2.04, "12_hour": 2.32, "24_hour": 2.62},
+      "25_year": {"1_hour": 1.42, "2_hour": 1.87, "6_hour": 2.41, "12_hour": 2.74, "24_hour": 3.10},
+      "50_year": {"1_hour": 1.60, "2_hour": 2.11, "6_hour": 2.72, "12_hour": 3.09, "24_hour": 3.50},
+      "100_year": {"1_hour": 1.80, "2_hour": 2.37, "6_hour": 3.06, "12_hour": 3.48, "24_hour": 3.94}
+    },
+    "units": "inches",
+    "data_source": "NOAA Atlas 14"
+  },
+  "metadata": {
+    "data_source": "NOAA Atlas 14",
+    "layers_requested": ["ams_depth_english"],
+    "units": "inches"
+  },
+  "location": {
+    "bounds": {"minx": -112.2, "miny": 33.3, "maxx": -112.0, "maxy": 33.5},
+    "center": {"lat": 33.4, "lon": -112.1},
+    "place_name": "Phoenix, AZ"
+  },
+  "usage_instructions": "This precipitation frequency data can be used to create charts, tables, or analysis. Use pandas to work with the data: df = pd.DataFrame(data['rainfall_data']['precipitation_frequencies']). To create a CSV: df.to_csv('rainfall_data.csv'). To plot: df.plot(kind='bar')."
+}
+```
+
+### GPT Integration Benefits
+
+1. **Immediate Data Access**: Small datasets available instantly as GeoJSON
+2. **No Binary Issues**: Pure JSON eliminates `ClientResponseError` and `ResponseTooLargeError`
+3. **Code Interpreter Ready**: Data formats work directly with pandas, geopandas
+4. **File Creation on Demand**: GPT can create shapefiles, CSVs, PDFs using Code Interpreter
+5. **Rich Instructions**: Each response includes specific usage guidance
+
+### Custom GPT Workflow
+
+1. **Create Jobs**: Use `POST /jobs` as before
+2. **Monitor Progress**: Use `GET /jobs/{job_id}` 
+3. **Access Data**: Use `GET /jobs/{job_id}/data` (primary endpoint)
+4. **Process Data**: Use received JSON directly with Code Interpreter
+5. **Create Files**: Generate shapefiles, CSVs, charts as needed 
