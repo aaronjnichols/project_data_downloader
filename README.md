@@ -71,9 +71,13 @@ A Python application for automatically downloading geospatial data from multiple
    python main.py --project my_project.yaml --dry-run
    ```
 
-## Command Line Interface
+## 📖 Documentation
 
-See `docs/MAIN_USAGE.md` for detailed command line instructions.
+- [Main Usage Guide](docs/MAIN_USAGE.md) - Command line interface
+- [API Usage Guide](docs/API_USAGE.md) - REST API endpoints  
+- [Custom GPT Instructions](docs/CUSTOM_GPT_INSTRUCTIONS.md) - GPT configuration details
+- [Custom GPT Setup Guide](docs/CUSTOM_GPT_SETUP_GUIDE.md) - Step-by-step GPT setup
+- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) - Production deployment
 
 ## Configuration
 
