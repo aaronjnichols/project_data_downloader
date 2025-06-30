@@ -95,6 +95,38 @@ async def health_check():
     return {"status": "healthy", "message": "API is running"}
 
 
+@app.get("/debug/job/{job_id}")
+async def debug_job_files(job_id: str):
+    """Debug endpoint to check job file status"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data:
+            return {"error": "Job not found"}
+        
+        zip_path = job_manager.get_result_file_path(job_id)
+        job_dir = job_manager.results_dir / job_id
+        
+        debug_info = {
+            "job_id": job_id,
+            "job_status": job_data.get("status"),
+            "zip_path": str(zip_path) if zip_path else None,
+            "zip_exists": zip_path.exists() if zip_path else False,
+            "zip_size": zip_path.stat().st_size if zip_path and zip_path.exists() else None,
+            "job_dir": str(job_dir),
+            "job_dir_exists": job_dir.exists(),
+            "job_dir_contents": list(str(p) for p in job_dir.iterdir()) if job_dir.exists() else [],
+            "results_dir": str(job_manager.results_dir),
+            "results_dir_contents": list(str(p.name) for p in job_manager.results_dir.iterdir()),
+            "progress": job_data.get("progress", {}),
+            "results": job_data.get("results", [])
+        }
+        
+        return debug_info
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/downloaders", response_model=DownloadersResponse)
 async def get_downloaders():
     """Get all available data source downloaders and their layers"""
@@ -207,13 +239,18 @@ async def get_job_status(job_id: str):
         successful = sum(1 for r in results if r.get("success", False))
         total_features = sum(r.get("feature_count", 0) for r in results if r.get("success", False))
         
+        zip_path = job_manager.get_result_file_path(job_id)
+        has_download = zip_path is not None and zip_path.exists()
+        
         result_summary = {
             "total_layers": len(results),
             "successful_layers": successful,
             "failed_layers": len(results) - successful,
             "total_features": total_features,
             "success_rate": successful / len(results) if results else 0,
-            "has_download": job_manager.get_result_file_path(job_id) is not None
+            "has_download": has_download,
+            "download_url": f"/jobs/{job_id}/result" if has_download else None,
+            "download_info_url": f"/jobs/{job_id}/download-info" if has_download else None
         }
     
     return JobStatusResponse(
@@ -231,26 +268,92 @@ async def get_job_status(job_id: str):
 @app.get("/jobs/{job_id}/result")
 async def download_job_result(job_id: str):
     """Download the ZIP file containing all job results"""
-    job_data = job_manager.get_job_status(job_id)
-    
-    if not job_data:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    if job_data["status"] != JobStatus.COMPLETED.value:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Job is not completed. Current status: {job_data['status']}"
+    try:
+        logger.info(f"Download request for job {job_id}")
+        
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data:
+            logger.warning(f"Job {job_id} not found")
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data["status"] != JobStatus.COMPLETED.value:
+            logger.warning(f"Job {job_id} not completed, status: {job_data['status']}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Job is not completed. Current status: {job_data['status']}"
+            )
+        
+        zip_path = job_manager.get_result_file_path(job_id)
+        logger.info(f"Looking for result file at: {zip_path}")
+        
+        if not zip_path:
+            logger.error(f"No result file path found for job {job_id}")
+            raise HTTPException(status_code=404, detail="Result file path not found")
+        
+        if not zip_path.exists():
+            logger.error(f"Result file does not exist: {zip_path}")
+            raise HTTPException(status_code=404, detail=f"Result file not found at {zip_path}")
+        
+        # Check file size and permissions
+        file_size = zip_path.stat().st_size
+        logger.info(f"Serving file {zip_path} (size: {file_size} bytes)")
+        
+        if file_size == 0:
+            logger.error(f"Result file is empty: {zip_path}")
+            raise HTTPException(status_code=500, detail="Result file is empty")
+        
+        return FileResponse(
+            path=str(zip_path),
+            filename=f"geospatial_data_{job_id}.zip",
+            media_type="application/zip",
+            headers={
+                "Content-Length": str(file_size),
+                "Cache-Control": "no-cache"
+            }
         )
-    
-    zip_path = job_manager.get_result_file_path(job_id)
-    if not zip_path or not zip_path.exists():
-        raise HTTPException(status_code=404, detail="Result file not found")
-    
-    return FileResponse(
-        path=zip_path,
-        filename=f"geospatial_data_{job_id}.zip",
-        media_type="application/zip"
-    )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error serving file for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error serving file: {str(e)}")
+
+
+@app.get("/jobs/{job_id}/download-info")
+async def get_download_info(job_id: str):
+    """Get download information for a completed job"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data["status"] != JobStatus.COMPLETED.value:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Job is not completed. Current status: {job_data['status']}"
+            )
+        
+        zip_path = job_manager.get_result_file_path(job_id)
+        if not zip_path or not zip_path.exists():
+            raise HTTPException(status_code=404, detail="Result file not found")
+        
+        file_size = zip_path.stat().st_size
+        
+        return {
+            "job_id": job_id,
+            "download_url": f"/jobs/{job_id}/result",
+            "filename": f"geospatial_data_{job_id}.zip",
+            "file_size_bytes": file_size,
+            "file_size_mb": round(file_size / (1024 * 1024), 2),
+            "status": "ready",
+            "created_at": job_data.get("completed_at", job_data.get("created_at"))
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting download info for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/preview", response_model=PreviewResponse)
