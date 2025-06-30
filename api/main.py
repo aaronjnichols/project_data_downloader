@@ -55,7 +55,13 @@ app = FastAPI(
     contact={
         "name": "Multi-Source Geospatial Data Downloader",
         "url": "https://github.com/your-username/project_data_downloader"
-    }
+    },
+    servers=[
+        {
+            "url": "https://project-data-downloader.onrender.com",
+            "description": "Production server"
+        }
+    ]
 )
 
 # Add CORS middleware
