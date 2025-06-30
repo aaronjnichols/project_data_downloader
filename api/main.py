@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from api.models import (
     JobRequest, JobResponse, JobStatusResponse, 
     DownloaderInfo, LayerInfo, PreviewRequest, PreviewResponse,
-    ErrorResponse, AOIBounds
+    ErrorResponse, AOIBounds, APIInfoResponse, DownloadersResponse, LayersResponse
 )
 from api.job_manager import job_manager, JobStatus
 from downloaders import get_downloader, list_downloaders
@@ -78,15 +78,15 @@ if Path("static").exists():
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-@app.get("/", response_model=Dict[str, str])
+@app.get("/", response_model=APIInfoResponse)
 async def root():
     """API root endpoint"""
-    return {
-        "message": "Multi-Source Geospatial Data Downloader API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "openapi": "/openapi.json"
-    }
+    return APIInfoResponse(
+        message="Multi-Source Geospatial Data Downloader API",
+        version="1.0.0",
+        docs="/docs",
+        openapi="/openapi.json"
+    )
 
 
 @app.get("/health")
@@ -95,34 +95,39 @@ async def health_check():
     return {"status": "healthy", "message": "API is running"}
 
 
-@app.get("/downloaders", response_model=Dict[str, DownloaderInfo])
+@app.get("/downloaders", response_model=DownloadersResponse)
 async def get_downloaders():
     """Get all available data source downloaders and their layers"""
     try:
         downloaders_info = job_manager.get_available_downloaders()
         
         # Convert to response format
-        response = {}
+        response_data = {}
         for downloader_id, info in downloaders_info.items():
             layers = {}
             for layer_id, layer_info in info["layers"].items():
                 layers[layer_id] = LayerInfo(**layer_info)
             
-            response[downloader_id] = DownloaderInfo(
+            response_data[downloader_id] = DownloaderInfo(
                 id=info["id"],
                 name=info["name"],
                 description=info["description"],
                 layers=layers
             )
         
-        return response
+        # Create response with explicit fields
+        return DownloadersResponse(
+            fema=response_data.get("fema"),
+            usgs_lidar=response_data.get("usgs_lidar"),
+            noaa_atlas14=response_data.get("noaa_atlas14")
+        )
         
     except Exception as e:
         logger.error(f"Error getting downloaders: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/downloaders/{downloader_id}/layers", response_model=Dict[str, LayerInfo])
+@app.get("/downloaders/{downloader_id}/layers", response_model=LayersResponse)
 async def get_downloader_layers(downloader_id: str):
     """Get available layers for a specific downloader"""
     try:
@@ -139,7 +144,7 @@ async def get_downloader_layers(downloader_id: str):
                 data_type=layer_info.data_type
             )
         
-        return layers
+        return LayersResponse(layers=layers)
         
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

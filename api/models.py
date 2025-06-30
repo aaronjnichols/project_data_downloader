@@ -121,4 +121,59 @@ class PreviewResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
-    job_id: Optional[str] = None 
+    job_id: Optional[str] = None
+
+
+class APIInfoResponse(BaseModel):
+    """Response model for the root API endpoint"""
+    message: str
+    version: str
+    docs: str
+    openapi: str
+
+
+class DownloadersResponse(BaseModel):
+    """Response model for the /downloaders endpoint"""
+    fema: Optional[DownloaderInfo] = None
+    usgs_lidar: Optional[DownloaderInfo] = None
+    noaa_atlas14: Optional[DownloaderInfo] = None
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "fema": {
+                    "id": "fema",
+                    "name": "FEMA NFHL",
+                    "description": "National Flood Hazard Layer data",
+                    "layers": {
+                        "28": {
+                            "id": "28",
+                            "name": "Flood Hazard Areas",
+                            "description": "Special Flood Hazard Areas",
+                            "geometry_type": "polygon",
+                            "data_type": "vector"
+                        }
+                    }
+                }
+            }
+        }
+
+
+class LayersResponse(BaseModel):
+    """Response model for the /downloaders/{id}/layers endpoint"""
+    layers: Dict[str, LayerInfo]
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "layers": {
+                    "28": {
+                        "id": "28",
+                        "name": "Flood Hazard Areas",
+                        "description": "Special Flood Hazard Areas",
+                        "geometry_type": "polygon",
+                        "data_type": "vector"
+                    }
+                }
+            }
+        } 
