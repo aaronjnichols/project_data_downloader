@@ -54,7 +54,7 @@ app = FastAPI(
     version="1.0.0",
     contact={
         "name": "Multi-Source Geospatial Data Downloader",
-        "url": "https://github.com/your-repo/project_data_downloader"
+        "url": "https://github.com/your-username/project_data_downloader"
     }
 )
 

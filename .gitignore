@@ -8,6 +8,11 @@ data_cache/
 temp/
 tmp/
 
+# API specific
+*.pid
+uvicorn.log
+api.log
+
 # Log Files
 *.log
 logs/
