@@ -3,9 +3,10 @@ FastAPI application for the Multi-Source Geospatial Data Downloader
 """
 import os
 import sys
+import json
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 import geopandas as gpd
 from shapely.geometry import shape
 
@@ -21,7 +22,8 @@ from fastapi.staticfiles import StaticFiles
 from api.models import (
     JobRequest, JobResponse, JobStatusResponse, 
     DownloaderInfo, LayerInfo, PreviewRequest, PreviewResponse,
-    ErrorResponse, AOIBounds, APIInfoResponse, DownloadersResponse, LayersResponse
+    ErrorResponse, AOIBounds, APIInfoResponse, DownloadersResponse, LayersResponse,
+    GPTDataResponse, DataPreviewResponse, DataSummary, DownloadLinks
 )
 from api.job_manager import job_manager, JobStatus
 from downloaders import get_downloader, list_downloaders
@@ -250,7 +252,17 @@ async def get_job_status(job_id: str):
             "success_rate": successful / len(results) if results else 0,
             "has_download": has_download,
             "download_url": f"/jobs/{job_id}/result" if has_download else None,
-            "download_info_url": f"/jobs/{job_id}/download-info" if has_download else None
+            "download_info_url": f"/jobs/{job_id}/download-info" if has_download else None,
+            # GPT-optimized endpoints
+            "gpt_data_url": f"/jobs/{job_id}/data" if has_download else None,
+            "summary_url": f"/jobs/{job_id}/summary" if has_download else None,
+            "preview_url": f"/jobs/{job_id}/preview" if has_download else None,
+            # Export endpoints
+            "export_urls": {
+                "geojson": f"/jobs/{job_id}/export/geojson" if has_download else None,
+                "shapefile": f"/jobs/{job_id}/export/shapefile" if has_download else None,
+                "pdf": f"/jobs/{job_id}/export/pdf" if has_download else None
+            }
         }
     
     return JobStatusResponse(
@@ -319,6 +331,167 @@ async def download_job_result(job_id: str):
         raise HTTPException(status_code=500, detail=f"Error serving file: {str(e)}")
 
 
+@app.get("/jobs/{job_id}/data", response_model=GPTDataResponse)
+async def get_job_data_gpt_optimized(job_id: str, format: Optional[str] = None):
+    """Get GPT-optimized data for a completed job"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data["status"] != JobStatus.COMPLETED.value:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Job is not completed. Current status: {job_data['status']}"
+            )
+        
+        # Get GPT-optimized data
+        gpt_data = job_manager.get_gpt_optimized_data(job_id)
+        if not gpt_data:
+            raise HTTPException(status_code=404, detail="No processable data found for this job")
+        
+        # Generate download links
+        download_links = job_manager.generate_download_links(job_id)
+        
+        # Create response
+        response = GPTDataResponse(
+            job_id=job_id,
+            status="completed",
+            data_size=gpt_data["data_size"],
+            response_type=gpt_data["response_type"],
+            download_links=DownloadLinks(**download_links),
+            instructions=gpt_data["instructions"],
+            processing_info={
+                "completed_at": job_data.get("completed_at"),
+                "total_layers": len(job_data.get("results", [])),
+                "successful_layers": sum(1 for r in job_data.get("results", []) if r.get("success"))
+            }
+        )
+        
+        # Add data based on response type
+        if gpt_data["response_type"] == "geojson":
+            response.geojson = gpt_data["geojson"]
+        elif gpt_data["response_type"] == "summary":
+            response.summary = DataSummary(
+                feature_count=gpt_data["summary"]["feature_count"],
+                bounds=AOIBounds(**gpt_data["summary"]["bounds"]),
+                attribute_summary=gpt_data["summary"].get("attribute_summary"),
+                data_quality=gpt_data["summary"].get("data_quality")
+            )
+            if "sample_geojson" in gpt_data:
+                response.geojson = gpt_data["sample_geojson"]
+        else:  # links_only
+            response.summary = DataSummary(
+                feature_count=gpt_data["summary"]["feature_count"],
+                bounds=AOIBounds(**gpt_data["summary"]["bounds"]),
+                attribute_summary=gpt_data["summary"].get("attribute_summary"),
+                data_quality=gpt_data["summary"].get("data_quality")
+            )
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting GPT data for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/jobs/{job_id}/summary", response_model=DataSummary)
+async def get_job_summary(job_id: str):
+    """Get data summary for a completed job (always returns summary, never full data)"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data["status"] != JobStatus.COMPLETED.value:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Job is not completed. Current status: {job_data['status']}"
+            )
+        
+        # Get GPT-optimized data
+        gpt_data = job_manager.get_gpt_optimized_data(job_id)
+        if not gpt_data or "summary" not in gpt_data:
+            raise HTTPException(status_code=404, detail="No summary data available for this job")
+        
+        summary_data = gpt_data["summary"]
+        return DataSummary(
+            feature_count=summary_data["feature_count"],
+            bounds=AOIBounds(**summary_data["bounds"]),
+            attribute_summary=summary_data.get("attribute_summary"),
+            data_quality=summary_data.get("data_quality")
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting summary for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/jobs/{job_id}/preview", response_model=DataPreviewResponse)
+async def get_job_preview(job_id: str, max_features: int = 50):
+    """Get a preview of job data (small sample for any dataset size)"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data["status"] != JobStatus.COMPLETED.value:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Job is not completed. Current status: {job_data['status']}"
+            )
+        
+        # Get GPT-optimized data
+        gpt_data = job_manager.get_gpt_optimized_data(job_id)
+        if not gpt_data:
+            raise HTTPException(status_code=404, detail="No preview data available for this job")
+        
+        # Create preview from available data
+        preview_geojson = None
+        if gpt_data.get("geojson"):
+            features = gpt_data["geojson"].get("features", [])
+            preview_features = features[:max_features]
+            preview_geojson = {
+                "type": "FeatureCollection",
+                "features": preview_features
+            }
+        elif gpt_data.get("sample_geojson"):
+            features = gpt_data["sample_geojson"].get("features", [])
+            preview_features = features[:max_features]
+            preview_geojson = {
+                "type": "FeatureCollection", 
+                "features": preview_features
+            }
+        
+        summary_data = gpt_data["summary"]
+        download_links = job_manager.generate_download_links(job_id)
+        
+        return DataPreviewResponse(
+            job_id=job_id,
+            preview_type="sample",
+            feature_count=len(preview_geojson["features"]) if preview_geojson else 0,
+            total_features=summary_data["feature_count"],
+            sample_geojson=preview_geojson,
+            summary=DataSummary(
+                feature_count=summary_data["feature_count"],
+                bounds=AOIBounds(**summary_data["bounds"]),
+                attribute_summary=summary_data.get("attribute_summary"),
+                data_quality=summary_data.get("data_quality")
+            ),
+            download_links=DownloadLinks(**download_links)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting preview for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/jobs/{job_id}/download-info")
 async def get_download_info(job_id: str):
     """Get download information for a completed job"""
@@ -353,6 +526,182 @@ async def get_download_info(job_id: str):
         raise
     except Exception as e:
         logger.error(f"Error getting download info for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/jobs/{job_id}/export/geojson")
+async def export_geojson(job_id: str):
+    """Export job results as GeoJSON file"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data or job_data["status"] != JobStatus.COMPLETED.value:
+            raise HTTPException(status_code=404, detail="Job not found or not completed")
+        
+        job_dir = job_manager.results_dir / job_id
+        geojson_files = list(job_dir.glob("*.geojson"))
+        
+        if not geojson_files:
+            # Try to convert shapefiles to GeoJSON
+            shp_files = list(job_dir.glob("*.shp"))
+            if shp_files:
+                geojson_files = job_manager._convert_shapefiles_to_geojson(shp_files)
+        
+        if not geojson_files:
+            raise HTTPException(status_code=404, detail="No GeoJSON data available")
+        
+        # If multiple files, combine them
+        if len(geojson_files) == 1:
+            return FileResponse(
+                path=str(geojson_files[0]),
+                filename=f"geospatial_data_{job_id}.geojson",
+                media_type="application/geo+json"
+            )
+        else:
+            # Combine multiple GeoJSON files
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.geojson', delete=False) as temp_file:
+                combined_features = []
+                for geojson_file in geojson_files:
+                    with open(geojson_file, 'r') as f:
+                        data = json.load(f)
+                        if data.get("type") == "FeatureCollection":
+                            combined_features.extend(data.get("features", []))
+                
+                combined_geojson = {
+                    "type": "FeatureCollection",
+                    "features": combined_features
+                }
+                json.dump(combined_geojson, temp_file, indent=2)
+                temp_path = temp_file.name
+            
+            return FileResponse(
+                path=temp_path,
+                filename=f"geospatial_data_{job_id}.geojson",
+                media_type="application/geo+json"
+            )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting GeoJSON for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/jobs/{job_id}/export/shapefile")
+async def export_shapefile(job_id: str):
+    """Export job results as shapefile ZIP"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data or job_data["status"] != JobStatus.COMPLETED.value:
+            raise HTTPException(status_code=404, detail="Job not found or not completed")
+        
+        job_dir = job_manager.results_dir / job_id
+        
+        # Look for existing shapefiles
+        shp_files = list(job_dir.glob("*.shp"))
+        if shp_files:
+            # Create ZIP with all shapefile components
+            import tempfile
+            import zipfile
+            
+            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temp_zip:
+                with zipfile.ZipFile(temp_zip.name, 'w') as zipf:
+                    for shp_file in shp_files:
+                        # Add shapefile and its components
+                        base_name = shp_file.stem
+                        for ext in ['.shp', '.shx', '.dbf', '.prj', '.cpg']:
+                            component_file = shp_file.parent / f"{base_name}{ext}"
+                            if component_file.exists():
+                                zipf.write(component_file, component_file.name)
+                
+                return FileResponse(
+                    path=temp_zip.name,
+                    filename=f"geospatial_data_{job_id}_shapefiles.zip",
+                    media_type="application/zip"
+                )
+        else:
+            # Try to convert GeoJSON to shapefile
+            geojson_files = list(job_dir.glob("*.geojson"))
+            if not geojson_files:
+                raise HTTPException(status_code=404, detail="No shapefile data available")
+            
+            import tempfile
+            import zipfile
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                
+                # Convert GeoJSON to shapefile
+                for i, geojson_file in enumerate(geojson_files):
+                    try:
+                        gdf = gpd.read_file(geojson_file)
+                        if not gdf.empty:
+                            shp_name = f"layer_{i}_{geojson_file.stem}.shp"
+                            shp_path = temp_path / shp_name
+                            gdf.to_file(shp_path, driver='ESRI Shapefile')
+                    except Exception as e:
+                        logger.warning(f"Error converting {geojson_file} to shapefile: {e}")
+                
+                # Create ZIP with all shapefiles
+                zip_path = temp_path / "shapefiles.zip"
+                with zipfile.ZipFile(zip_path, 'w') as zipf:
+                    for file_path in temp_path.rglob('*'):
+                        if file_path.is_file() and file_path.name != "shapefiles.zip":
+                            zipf.write(file_path, file_path.name)
+                
+                return FileResponse(
+                    path=str(zip_path),
+                    filename=f"geospatial_data_{job_id}_shapefiles.zip",
+                    media_type="application/zip"
+                )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting shapefile for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/jobs/{job_id}/export/pdf")
+async def export_pdf(job_id: str):
+    """Export job PDF reports if available"""
+    try:
+        job_data = job_manager.get_job_status(job_id)
+        if not job_data or job_data["status"] != JobStatus.COMPLETED.value:
+            raise HTTPException(status_code=404, detail="Job not found or not completed")
+        
+        job_dir = job_manager.results_dir / job_id
+        pdf_files = list(job_dir.glob("*.pdf"))
+        
+        if not pdf_files:
+            raise HTTPException(status_code=404, detail="No PDF reports available for this job")
+        
+        if len(pdf_files) == 1:
+            return FileResponse(
+                path=str(pdf_files[0]),
+                filename=f"report_{job_id}.pdf",
+                media_type="application/pdf"
+            )
+        else:
+            # Create ZIP with multiple PDFs
+            import tempfile
+            import zipfile
+            
+            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temp_zip:
+                with zipfile.ZipFile(temp_zip.name, 'w') as zipf:
+                    for pdf_file in pdf_files:
+                        zipf.write(pdf_file, pdf_file.name)
+                
+                return FileResponse(
+                    path=temp_zip.name,
+                    filename=f"reports_{job_id}.zip",
+                    media_type="application/zip"
+                )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting PDF for job {job_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

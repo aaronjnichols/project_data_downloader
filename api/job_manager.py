@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 import logging
+import numpy as np
 import geopandas as gpd
 from shapely.geometry import shape, box
 
@@ -264,6 +265,220 @@ class JobManager:
         """Get the path to the result ZIP file for a job"""
         zip_path = self.results_dir / f"{job_id}_results.zip"
         return zip_path if zip_path.exists() else None
+    
+    def get_gpt_optimized_data(self, job_id: str) -> Optional[Dict]:
+        """Get GPT-optimized data for a completed job"""
+        job_data = self.get_job_status(job_id)
+        if not job_data or job_data["status"] != "completed":
+            return None
+        
+        job_dir = self.results_dir / job_id
+        if not job_dir.exists():
+            return None
+        
+        # Collect all GeoJSON files
+        geojson_files = list(job_dir.glob("*.geojson"))
+        if not geojson_files:
+            # Try to find shapefiles and convert
+            shp_files = list(job_dir.glob("*.shp"))
+            if shp_files:
+                geojson_files = self._convert_shapefiles_to_geojson(shp_files)
+        
+        if not geojson_files:
+            return None
+        
+        # Analyze data size and create appropriate response
+        total_size = 0
+        all_features = []
+        bounds_list = []
+        
+        for geojson_file in geojson_files:
+            try:
+                with open(geojson_file, 'r') as f:
+                    data = json.load(f)
+                
+                if data.get("type") == "FeatureCollection":
+                    features = data.get("features", [])
+                    all_features.extend(features)
+                    
+                    # Calculate bounds
+                    if features:
+                        gdf = gpd.read_file(geojson_file)
+                        bounds = gdf.total_bounds
+                        bounds_list.append(bounds)
+                
+                total_size += geojson_file.stat().st_size
+                
+            except Exception as e:
+                logger.warning(f"Error reading {geojson_file}: {e}")
+                continue
+        
+        # Determine response type based on size
+        size_mb = total_size / (1024 * 1024)
+        
+        if size_mb < 0.5:  # Small dataset - return GeoJSON
+            return self._create_small_dataset_response(job_id, all_features, bounds_list)
+        elif size_mb < 5:  # Medium dataset - return summary + sample
+            return self._create_medium_dataset_response(job_id, all_features, bounds_list)
+        else:  # Large dataset - return summary only
+            return self._create_large_dataset_response(job_id, all_features, bounds_list)
+    
+    def _convert_shapefiles_to_geojson(self, shp_files: List[Path]) -> List[Path]:
+        """Convert shapefiles to GeoJSON for GPT consumption"""
+        geojson_files = []
+        
+        for shp_file in shp_files:
+            try:
+                gdf = gpd.read_file(shp_file)
+                geojson_file = shp_file.with_suffix('.geojson')
+                
+                # Simplify geometries and reduce precision for GPT
+                if not gdf.empty:
+                    # Simplify geometries (tolerance in degrees)
+                    gdf['geometry'] = gdf['geometry'].simplify(0.0001)
+                    
+                    # Round coordinates to 6 decimal places
+                    gdf = gdf.round(6)
+                    
+                    # Write to GeoJSON
+                    gdf.to_file(geojson_file, driver='GeoJSON')
+                    geojson_files.append(geojson_file)
+                    
+            except Exception as e:
+                logger.warning(f"Error converting {shp_file} to GeoJSON: {e}")
+                continue
+        
+        return geojson_files
+    
+    def _create_small_dataset_response(self, job_id: str, features: List, bounds_list: List) -> Dict:
+        """Create response for small datasets (include full GeoJSON)"""
+        # Combine all features
+        combined_geojson = {
+            "type": "FeatureCollection",
+            "features": features[:1000]  # Limit to 1000 features max
+        }
+        
+        # Calculate combined bounds
+        overall_bounds = self._calculate_overall_bounds(bounds_list)
+        
+        return {
+            "data_size": "small",
+            "response_type": "geojson",
+            "geojson": combined_geojson,
+            "feature_count": len(features),
+            "bounds": overall_bounds,
+            "instructions": "This dataset is small enough to be included directly as GeoJSON. You can use this data immediately with geopandas or other geospatial libraries."
+        }
+    
+    def _create_medium_dataset_response(self, job_id: str, features: List, bounds_list: List) -> Dict:
+        """Create response for medium datasets (summary + sample)"""
+        # Create sample (first 100 features)
+        sample_features = features[:100]
+        sample_geojson = {
+            "type": "FeatureCollection",
+            "features": sample_features
+        }
+        
+        overall_bounds = self._calculate_overall_bounds(bounds_list)
+        summary = self._create_data_summary(features, overall_bounds)
+        
+        return {
+            "data_size": "medium",
+            "response_type": "summary",
+            "sample_geojson": sample_geojson,
+            "summary": summary,
+            "instructions": f"This dataset contains {len(features)} features. A sample of {len(sample_features)} features is included. Use the download links for the complete dataset."
+        }
+    
+    def _create_large_dataset_response(self, job_id: str, features: List, bounds_list: List) -> Dict:
+        """Create response for large datasets (summary only)"""
+        overall_bounds = self._calculate_overall_bounds(bounds_list)
+        summary = self._create_data_summary(features, overall_bounds)
+        
+        return {
+            "data_size": "large",
+            "response_type": "links_only",
+            "summary": summary,
+            "instructions": f"This large dataset contains {len(features)} features. Due to size constraints, only summary statistics are provided. Use the download links to access the complete data."
+        }
+    
+    def _calculate_overall_bounds(self, bounds_list: List) -> Dict:
+        """Calculate overall bounds from list of bounds"""
+        if not bounds_list:
+            return {"minx": 0, "miny": 0, "maxx": 0, "maxy": 0}
+        
+        # Combine all bounds
+        all_bounds = np.array(bounds_list)
+        overall = {
+            "minx": float(all_bounds[:, 0].min()),
+            "miny": float(all_bounds[:, 1].min()),
+            "maxx": float(all_bounds[:, 2].max()),
+            "maxy": float(all_bounds[:, 3].max())
+        }
+        return overall
+    
+    def _create_data_summary(self, features: List, bounds: Dict) -> Dict:
+        """Create summary statistics for features"""
+        if not features:
+            return {"feature_count": 0, "bounds": bounds}
+        
+        # Analyze attributes
+        attribute_summary = {}
+        for feature in features[:100]:  # Sample first 100 for attribute analysis
+            properties = feature.get("properties", {})
+            for key, value in properties.items():
+                if key not in attribute_summary:
+                    attribute_summary[key] = {"type": type(value).__name__, "sample_values": set()}
+                
+                if len(attribute_summary[key]["sample_values"]) < 5:
+                    attribute_summary[key]["sample_values"].add(str(value))
+        
+        # Convert sets to lists for JSON serialization
+        for key in attribute_summary:
+            attribute_summary[key]["sample_values"] = list(attribute_summary[key]["sample_values"])
+        
+        return {
+            "feature_count": len(features),
+            "bounds": bounds,
+            "attribute_summary": attribute_summary,
+            "data_quality": {
+                "has_geometries": all(f.get("geometry") is not None for f in features[:10]),
+                "has_properties": all(f.get("properties") for f in features[:10])
+            }
+        }
+    
+    def generate_download_links(self, job_id: str) -> Dict:
+        """Generate download links for different formats"""
+        base_url = "https://project-data-downloader.onrender.com"
+        
+        # Check what files are available
+        job_dir = self.results_dir / job_id
+        zip_path = self.results_dir / f"{job_id}_results.zip"
+        
+        links = {}
+        
+        if zip_path.exists():
+            links["original_zip"] = f"{base_url}/jobs/{job_id}/result"
+        
+        if job_dir.exists():
+            # Check for GeoJSON files
+            if list(job_dir.glob("*.geojson")):
+                links["geojson"] = f"{base_url}/jobs/{job_id}/export/geojson"
+            
+            # Check for shapefiles
+            if list(job_dir.glob("*.shp")):
+                links["shapefile"] = f"{base_url}/jobs/{job_id}/export/shapefile"
+            
+            # Check for PDFs
+            if list(job_dir.glob("*.pdf")):
+                links["pdf"] = f"{base_url}/jobs/{job_id}/export/pdf"
+        
+        # Add expiration time (24 hours from now)
+        from datetime import datetime, timedelta
+        expires_at = (datetime.utcnow() + timedelta(hours=24)).isoformat() + "Z"
+        links["expires_at"] = expires_at
+        
+        return links
     
     def cleanup_old_jobs(self, max_age_days: int = 7):
         """Clean up old job files and results"""

@@ -176,4 +176,56 @@ class LayersResponse(BaseModel):
                     }
                 }
             }
-        } 
+        }
+
+
+class DataSummary(BaseModel):
+    """Summary statistics for a dataset"""
+    feature_count: int
+    total_area_sq_km: Optional[float] = None
+    bounds: AOIBounds
+    attribute_summary: Optional[Dict[str, Any]] = None
+    data_quality: Optional[Dict[str, Any]] = None
+
+
+class DownloadLinks(BaseModel):
+    """Download links for different data formats"""
+    geojson: Optional[str] = None
+    shapefile: Optional[str] = None
+    pdf: Optional[str] = None
+    original_zip: Optional[str] = None
+    expires_at: Optional[str] = None
+
+
+class GPTDataResponse(BaseModel):
+    """GPT-optimized data response"""
+    job_id: str
+    status: str
+    data_size: str  # "small", "medium", "large"
+    response_type: str  # "geojson", "summary", "links_only"
+    
+    # For small datasets - include GeoJSON directly
+    geojson: Optional[Dict[str, Any]] = None
+    
+    # For large datasets - provide summary
+    summary: Optional[DataSummary] = None
+    
+    # Always provide download links
+    download_links: DownloadLinks
+    
+    # Instructions for GPT on how to use the data
+    instructions: str
+    
+    # Metadata
+    processing_info: Optional[Dict[str, Any]] = None
+
+
+class DataPreviewResponse(BaseModel):
+    """Response for data preview requests"""
+    job_id: str
+    preview_type: str  # "sample", "summary", "bounds_only"
+    feature_count: int
+    total_features: int
+    sample_geojson: Optional[Dict[str, Any]] = None
+    summary: DataSummary
+    download_links: DownloadLinks 
