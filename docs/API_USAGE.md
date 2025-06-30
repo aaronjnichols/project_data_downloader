@@ -289,4 +289,63 @@ For production deployment:
 For issues or questions:
 1. Check the interactive API documentation at `/docs`
 2. Review the OpenAPI schema at `/openapi.json`
-3. Check server health at `/health` 
+3. Check server health at `/health`
+
+## GPT-Optimized Endpoints (NEW)
+
+The API now includes specialized endpoints designed for Custom GPT Actions that automatically handle response size limitations and provide data in GPT-friendly formats.
+
+### Primary GPT Endpoint
+
+**`GET /jobs/{job_id}/data`** - Smart data delivery
+- **Small datasets** (< 500KB): Returns complete GeoJSON data
+- **Medium datasets** (500KB - 5MB): Returns summary + sample GeoJSON
+- **Large datasets** (> 5MB): Returns summary + download links only
+- Always includes download links for all formats
+
+### Additional GPT Endpoints
+
+**`GET /jobs/{job_id}/summary`** - Always returns summary statistics (never full data)
+**`GET /jobs/{job_id}/preview`** - Small preview sample for any dataset size
+**`GET /jobs/{job_id}/export/geojson`** - Direct GeoJSON file download
+**`GET /jobs/{job_id}/export/shapefile`** - Shapefile ZIP download
+**`GET /jobs/{job_id}/export/pdf`** - PDF reports download
+
+### Response Format Examples
+
+#### Small Dataset Response
+```json
+{
+  "job_id": "abc123",
+  "status": "completed",
+  "data_size": "small",
+  "response_type": "geojson",
+  "geojson": {
+    "type": "FeatureCollection",
+    "features": [...]
+  },
+  "download_links": {
+    "geojson": "/jobs/abc123/export/geojson",
+    "shapefile": "/jobs/abc123/export/shapefile",
+    "original_zip": "/jobs/abc123/result"
+  },
+  "instructions": "This dataset is small enough to be included directly as GeoJSON..."
+}
+```
+
+#### Large Dataset Response
+```json
+{
+  "job_id": "abc123",
+  "status": "completed", 
+  "data_size": "large",
+  "response_type": "links_only",
+  "summary": {
+    "feature_count": 15000,
+    "bounds": {"minx": -105.3, "miny": 39.9, "maxx": -105.1, "maxy": 40.1},
+    "attribute_summary": {...}
+  },
+  "download_links": {...},
+  "instructions": "This large dataset contains 15000 features. Use download links..."
+}
+``` 
