@@ -53,13 +53,22 @@ class USGSLidarDownloader(BaseDownloader):
             )
 
         minx, miny, maxx, maxy = aoi_bounds
-        # Try different DEM datasets in order of preference (highest resolution first)
+        # Try different DEM datasets in order of preference (highest resolution DEMs first)
+        # Prioritizing DEM raster formats over raw LiDAR point clouds
         datasets = [
-            "3DEP Elevation: DEM (1 meter)",
-            "3DEP Elevation: DEM (1/3 arc-second)",
-            "National Elevation Dataset (NED) 1/3 arc-second",
-            "3DEP Elevation: DEM (1 arc-second)", 
-            "National Elevation Dataset (NED) 1 arc-second"
+            "DEM Source (OPR)",  # Original Product Resolution DEMs (sub-meter)
+            "Digital Elevation Model (DEM) 1 meter",  # Current 3DEP name
+            "1-meter DEM",  # Alternative current name
+            "Seamless 1-meter DEM (Limited Availability)",
+            "1/9 arc-second DEM",  # ~3m resolution (was missing)
+            "3DEP Elevation: DEM (1 meter)",  # Legacy name fallback
+            "1/3 arc-second DEM",  # Current name
+            "3DEP Elevation: DEM (1/3 arc-second)",  # Legacy name
+            "1 arc-second DEM",  # Current name  
+            "3DEP Elevation: DEM (1 arc-second)",  # Legacy name
+            "National Elevation Dataset (NED) 1/3 arc-second",  # Legacy fallback
+            "National Elevation Dataset (NED) 1 arc-second",  # Legacy fallback
+            "Lidar Point Cloud (LPC)",  # Raw LiDAR data - fallback option
         ]
         
         items = []
@@ -69,9 +78,9 @@ class USGSLidarDownloader(BaseDownloader):
             params = {
                 "bbox": f"{minx},{miny},{maxx},{maxy}",
                 "datasets": dataset,
-                "prodFormats": "GeoTIFF", 
+                "prodFormats": "GeoTIFF,IMG,LAS,LAZ",  # Prioritize raster formats (GeoTIFF, IMG) over LiDAR (LAS, LAZ)
                 "outputFormat": "JSON",
-                "max": 1,
+                "max": 50,  # Increased to find more options and better coverage
             }
             
             response = self.session.get(self.base_url, params=params)
@@ -95,17 +104,34 @@ class USGSLidarDownloader(BaseDownloader):
         # Log which dataset was found
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Found DEM data using dataset: {dataset_used}")
-        logger.info(f"DEM title: {items[0].get('title', 'N/A')}")
+        logger.info(f"Found elevation data using dataset: {dataset_used}")
+        logger.info(f"Title: {items[0].get('title', 'N/A')}")
+        logger.info(f"Format: {items[0].get('format', 'N/A')}")
+        logger.info(f"Source Date: {items[0].get('dateCreated', 'N/A')}")
+        
+        # Find the best resolution item if multiple available
+        best_item = items[0]
+        if len(items) > 1:
+            # Sort by size (larger files typically higher resolution) or date (newer typically better)
+            items_with_size = [item for item in items if item.get('sizeInBytes')]
+            if items_with_size:
+                best_item = max(items_with_size, key=lambda x: x.get('sizeInBytes', 0))
+                logger.info(f"Selected highest resolution item: {best_item.get('title', 'N/A')} ({best_item.get('sizeInBytes', 0) / (1024*1024):.1f} MB)")
         
         try:
-            download_url = items[0].get("downloadURL") or items[0].get("urls", {}).get("downloadURL")
+            download_url = best_item.get("downloadURL") or best_item.get("urls", {}).get("downloadURL")
             if not download_url:
                 return DownloadResult(
                     success=False,
                     layer_id=layer_id,
                     error_message="Download URL not found",
                 )
+            
+            # Determine if this is LiDAR point cloud data
+            format_type = best_item.get('format', '').upper()
+            is_lidar = format_type in ['LAS', 'LAZ'] or 'lidar' in dataset_used.lower() or 'lpc' in dataset_used.lower()
+            logger.info(f"Data type detected: {'LiDAR Point Cloud' if is_lidar else 'DEM Raster'}")
+            
         except Exception as e:
             return DownloadResult(
                 success=False,
@@ -115,12 +141,32 @@ class USGSLidarDownloader(BaseDownloader):
 
         os.makedirs(output_path, exist_ok=True)
         
-        # Determine file extension from URL or content type
-        if download_url.lower().endswith('.tif') or download_url.lower().endswith('.tiff'):
+        # Determine file extension and type from URL or format
+        url_lower = download_url.lower()
+        if url_lower.endswith('.las'):
+            download_path = os.path.join(output_path, "usgs_lidar.las")
+            is_zip = False
+            file_type = 'lidar'
+        elif url_lower.endswith('.laz'):
+            download_path = os.path.join(output_path, "usgs_lidar.laz")
+            is_zip = False
+            file_type = 'lidar'
+        elif url_lower.endswith('.tif') or url_lower.endswith('.tiff'):
             download_path = os.path.join(output_path, "usgs_dem.tif")
             is_zip = False
+            file_type = 'raster'
+        elif url_lower.endswith('.img'):
+            download_path = os.path.join(output_path, "usgs_dem.img")
+            is_zip = False
+            file_type = 'raster'
         else:
-            download_path = os.path.join(output_path, "usgs_dem.zip") 
+            # Default to ZIP for unknown extensions
+            if is_lidar:
+                download_path = os.path.join(output_path, "usgs_lidar.zip")
+                file_type = 'lidar'
+            else:
+                download_path = os.path.join(output_path, "usgs_dem.zip")
+                file_type = 'raster'
             is_zip = True
 
         if not self.session.download_file(download_url, download_path):
@@ -137,50 +183,85 @@ class USGSLidarDownloader(BaseDownloader):
                     zf.extractall(output_path)
                 os.remove(download_path)  # Clean up ZIP file
             except zipfile.BadZipFile:
-                # File might be a direct TIFF despite .zip extension
-                logger.info("Downloaded file is not a ZIP, treating as direct TIFF")
-                tiff_path = os.path.join(output_path, "usgs_dem.tif")
-                os.rename(download_path, tiff_path)
+                # File might be a direct file despite .zip extension
+                if file_type == 'lidar':
+                    logger.info("Downloaded file is not a ZIP, treating as direct LiDAR file")
+                    lidar_path = os.path.join(output_path, "usgs_lidar.las")
+                    os.rename(download_path, lidar_path)
+                else:
+                    logger.info("Downloaded file is not a ZIP, treating as direct raster")
+                    tiff_path = os.path.join(output_path, "usgs_dem.tif")
+                    os.rename(download_path, tiff_path)
                 is_zip = False
             except Exception as e:
                 return DownloadResult(
                     success=False,
                     layer_id=layer_id,
-                    error_message=f"Error extracting DEM: {e}",
+                    error_message=f"Error extracting data: {e}",
                 )
 
-        # Find DEM files
-        dem_files = [f for f in os.listdir(output_path) if f.lower().endswith((".tif", ".tiff"))]
-        if not dem_files:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message="No DEM file found after download",
-            )
-
-        dem_path = os.path.join(output_path, dem_files[0])
-        logger.info(f"DEM file ready: {dem_path} ({os.path.getsize(dem_path) / (1024*1024):.1f} MB)")
+        # Handle LiDAR point cloud files
+        if file_type == 'lidar':
+            lidar_files = [f for f in os.listdir(output_path) if f.lower().endswith((".las", ".laz"))]
+            if not lidar_files:
+                return DownloadResult(
+                    success=False,
+                    layer_id=layer_id,
+                    error_message="No LiDAR file found after download",
+                )
+            
+            lidar_path = os.path.join(output_path, lidar_files[0])
+            logger.info(f"LiDAR file ready: {lidar_path} ({os.path.getsize(lidar_path) / (1024*1024):.1f} MB)")
+            logger.info("Note: LiDAR point cloud data downloaded. Consider converting to DEM for contour generation.")
+            
+            metadata = {
+                "lidar_path": lidar_path,
+                "data_type": "lidar_point_cloud",
+                "note": "Raw LiDAR point cloud data - highest resolution available"
+            }
+            
+            return DownloadResult(success=True, layer_id=layer_id, file_path=lidar_path, metadata=metadata)
         
-        # Check units and convert if needed, then clip to AOI
-        processed_dem_path = self._process_dem(dem_path, output_path, **kwargs)
-        if not processed_dem_path:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message="Failed to process DEM (clipping or unit conversion)",
-            )
-        
-        metadata = {"dem_path": processed_dem_path}
+        # Handle raster DEM files
+        else:
+            dem_files = [f for f in os.listdir(output_path) if f.lower().endswith((".tif", ".tiff", ".img"))]
+            if not dem_files:
+                return DownloadResult(
+                    success=False,
+                    layer_id=layer_id,
+                    error_message="No DEM file found after download",
+                )
 
-        interval = self.config.get("contour_interval")
-        if interval:
-            contour_name = f"contours_{safe_file_name(str(interval))}_ft.shp"
-            contour_path = os.path.join(output_path, contour_name)
-            success = dem_to_contours(processed_dem_path, contour_path, interval)
-            if success:
-                metadata["contour_path"] = contour_path
+            dem_path = os.path.join(output_path, dem_files[0])
+            logger.info(f"DEM file ready: {dem_path} ({os.path.getsize(dem_path) / (1024*1024):.1f} MB)")
+            
+            # Check units and convert if needed, then clip to AOI
+            processed_dem_path = self._process_dem(dem_path, output_path, **kwargs)
+            if not processed_dem_path:
+                return DownloadResult(
+                    success=False,
+                    layer_id=layer_id,
+                    error_message="Failed to process DEM (clipping or unit conversion)",
+                )
+            
+            metadata = {
+                "dem_path": processed_dem_path,
+                "data_type": "raster_dem",
+                "dataset_used": dataset_used
+            }
 
-        return DownloadResult(success=True, layer_id=layer_id, file_path=processed_dem_path, metadata=metadata)
+            interval = self.config.get("contour_interval")
+            if interval:
+                contour_name = f"contours_{safe_file_name(str(interval))}_ft.shp"
+                contour_path = os.path.join(output_path, contour_name)
+                success = dem_to_contours(processed_dem_path, contour_path, interval)
+                if success:
+                    metadata["contour_path"] = contour_path
+
+            # Clean up intermediate files - only keep final products
+            self._cleanup_intermediate_files(output_path, processed_dem_path)
+
+            return DownloadResult(success=True, layer_id=layer_id, file_path=processed_dem_path, metadata=metadata)
 
     def _process_dem(self, dem_path: str, output_path: str, **kwargs) -> str:
         """
@@ -267,3 +348,55 @@ class USGSLidarDownloader(BaseDownloader):
         except Exception as e:
             logger.error(f"Error processing DEM: {e}")
             return dem_path  # Return original on error
+
+    def _cleanup_intermediate_files(self, output_path: str, final_dem_path: str):
+        """
+        Clean up intermediate DEM files, keeping only final products
+        
+        Args:
+            output_path: Output directory containing files
+            final_dem_path: Path to the final processed DEM file to keep
+        """
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # List of intermediate files to remove
+            intermediate_patterns = [
+                "usgs_dem.tif",          # Original downloaded DEM (meters, unclipped)
+                "usgs_dem_feet.tif",     # Converted DEM (feet, unclipped)
+                "usgs_dem.img",          # Original downloaded DEM in IMG format
+                "usgs_lidar.las",        # LiDAR point cloud files (if any)
+                "usgs_lidar.laz"         # Compressed LiDAR point cloud files
+            ]
+            
+            # Get the final file name to avoid deleting it
+            final_filename = os.path.basename(final_dem_path)
+            
+            files_removed = 0
+            for filename in os.listdir(output_path):
+                file_path = os.path.join(output_path, filename)
+                
+                # Skip if this is the final DEM file we want to keep
+                if filename == final_filename:
+                    continue
+                    
+                # Skip if this is a contour shapefile (keep all contour files)
+                if filename.startswith("contours_") and filename.endswith((".shp", ".shx", ".dbf", ".prj", ".cpg")):
+                    continue
+                
+                # Remove intermediate files
+                if filename in intermediate_patterns:
+                    try:
+                        os.remove(file_path)
+                        logger.info(f"Removed intermediate file: {filename}")
+                        files_removed += 1
+                    except Exception as e:
+                        logger.warning(f"Could not remove intermediate file {filename}: {e}")
+            
+            if files_removed > 0:
+                logger.info(f"Cleaned up {files_removed} intermediate files, keeping only final products")
+            else:
+                logger.info("No intermediate files found to clean up")
+                
+        except Exception as e:
+            logger.warning(f"Error during file cleanup: {e}")

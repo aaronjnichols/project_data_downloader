@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude agents list)",
+      "Bash(python test:*)",
+      "Bash(mv:*)",
+      "Bash(pip install:*)",
+      "Bash(streamlit run:*)",
+      "Bash(python -m streamlit run:*)",
+      "Bash(python:*)",
+      "Bash(set STREAMLIT_SERVER_HEADLESS=true)",
+      "Bash(set STREAMLIT_BROWSER_GATHER_USAGE_STATS=false)",
+      "WebSearch",
+      "WebFetch(domain:tnmaccess.nationalmap.gov)",
+      "Bash(curl:*)",
+      "Bash(mkdir:*)",
+      "Bash(taskkill:*)",
+      "Bash(git add:*)",
+      "Bash(rm:*)"
+    ],
+    "defaultMode": "acceptEdits"
+  }
+}

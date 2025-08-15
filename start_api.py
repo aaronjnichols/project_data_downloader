@@ -25,11 +25,11 @@ def main():
     reload = os.getenv("API_RELOAD", "false").lower() == "true"
     log_level = os.getenv("API_LOG_LEVEL", "info")
     
-    print(f"🚀 Starting Multi-Source Geospatial Data Downloader API")
-    print(f"📍 Server: http://{host}:{port}")
-    print(f"📖 Documentation: http://{host}:{port}/docs")
-    print(f"🔧 OpenAPI Schema: http://{host}:{port}/openapi.json")
-    print(f"🏥 Health Check: http://{host}:{port}/health")
+    print(f"Starting Multi-Source Geospatial Data Downloader API")
+    print(f"Server: http://{host}:{port}")
+    print(f"Documentation: http://{host}:{port}/docs")
+    print(f"OpenAPI Schema: http://{host}:{port}/openapi.json")
+    print(f"Health Check: http://{host}:{port}/health")
     
     # Start the server
     uvicorn.run(
