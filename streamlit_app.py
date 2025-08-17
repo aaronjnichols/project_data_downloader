@@ -28,7 +28,7 @@ from streamlit_folium import st_folium
 # Import our custom modules
 from api_client import GeospatialAPIClient
 from streamlit_config import Config
-from enhanced_map import display_aoi_drawing_interface
+from unified_map import display_unified_map_interface
 from cad_export import export_job_to_cad_formats, create_cad_export_zip
 
 # Configure page
@@ -38,6 +38,23 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Add keyboard shortcuts
+st.markdown("""
+<script>
+document.addEventListener('keydown', function(e) {
+    // Ctrl/Cmd + R: Refresh data sources
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+        e.preventDefault();
+        // Trigger refresh (would need JS bridge in real implementation)
+    }
+    // Escape: Clear selection
+    if (e.key === 'Escape') {
+        // Clear selection logic
+    }
+});
+</script>
+""", unsafe_allow_html=True)
 
 # Custom CSS for professional appearance
 st.markdown("""
@@ -107,14 +124,25 @@ def init_session_state():
     
     if 'job_results' not in st.session_state:
         st.session_state.job_results = {}
+    
+    if 'persistent_downloads' not in st.session_state:
+        st.session_state.persistent_downloads = {}
 
 def create_header():
-    """Create the application header"""
-    st.markdown('<h1 class="main-header">🗺️ Geospatial Data Downloader</h1>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub-header">Professional geospatial data acquisition from FEMA, USGS, and NOAA sources</p>', 
-        unsafe_allow_html=True
-    )
+    """Create the application header with quick stats"""
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.markdown('<h1 class="main-header">🗺️ Geospatial Data Downloader</h1>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="sub-header">Professional geospatial data acquisition from FEMA, USGS, and NOAA sources</p>', 
+            unsafe_allow_html=True
+        )
+    
+    with col2:
+        # Quick access settings
+        if st.button("⚙️ Settings", help="User preferences and settings"):
+            st.session_state.show_settings = not st.session_state.get('show_settings', False)
 
 def validate_shapefile_upload(uploaded_files):
     """Validate uploaded shapefile components"""
@@ -250,115 +278,168 @@ def load_data_sources():
         st.error(f"Failed to load data sources: {str(e)}")
         return None
 
-def display_data_source_selection(sources):
-    """Display data source and layer selection interface"""
-    st.subheader("📊 Data Source Selection")
+def display_simple_data_selection(sources):
+    """Display simplified data source selection - multiple datasets allowed"""
+    st.subheader("📊 Select Data Sources")
     
     if not sources:
         st.warning("No data sources available. Please check API connection.")
-        return None, None
+        return None, None, {}
     
-    # Convert API response to display format
+    # Build available source options
     source_options = {}
     for source_id, source_info in sources.items():
         if source_info:  # Skip None sources
-            source_options[f"{source_info['name']} ({source_id})"] = {
-                'id': source_id,
-                'info': source_info
-            }
+            if source_id == 'fema':
+                source_options["🌊 FEMA - All Flood Risk Data"] = {
+                    'id': source_id,
+                    'info': source_info,
+                    'description': "Complete FEMA flood hazard dataset (all layers)"
+                }
+            elif source_id == 'usgs_lidar':
+                source_options["⛰️ USGS - Elevation Data"] = {
+                    'id': source_id,
+                    'info': source_info,
+                    'description': "USGS LiDAR digital elevation models"
+                }
+            elif source_id == 'noaa_atlas14':
+                source_options["🌧️ NOAA - All Precipitation Data"] = {
+                    'id': source_id,
+                    'info': source_info,
+                    'description': "Complete NOAA Atlas 14 precipitation dataset"
+                }
     
     if not source_options:
         st.warning("No data sources are currently available.")
-        return None, None
+        return None, None, {}
     
-    # Clear previous selection state when data sources change
-    if 'selected_source_key' not in st.session_state:
-        st.session_state.selected_source_key = None
+    # Multiple selection with checkboxes
+    st.write("**Select one or more datasets to download:**")
+    
+    selected_sources = []
+    all_layer_ids = []
+    all_config_options = {}
+    
+    for source_name, source_data in source_options.items():
+        source_id = source_data['id']
+        source_info = source_data['info']
         
-    # Source selection with unique key to avoid caching issues
-    selected_source_name = st.selectbox(
-        "Select Data Source",
-        options=list(source_options.keys()),
-        help="Choose the data source for your download",
-        key=f"source_selector_{len(source_options)}"  # Unique key to force refresh
-    )
-    
-    if not selected_source_name:
-        return None, None
-    
-    selected_source = source_options[selected_source_name]
-    source_id = selected_source['id']
-    source_info = selected_source['info']
-    
-    # Display source information
-    with st.expander("ℹ️ Data Source Information", expanded=True):
-        st.write(f"**Description:** {source_info['description']}")
-        st.write(f"**Available Layers:** {len(source_info['layers'])}")
-    
-    # Layer selection
-    layer_options = {}
-    for layer_id, layer_info in source_info['layers'].items():
-        layer_name = f"{layer_info['name']} (ID: {layer_id})"
-        layer_options[layer_name] = {
-            'id': layer_id,
-            'info': layer_info
-        }
-    
-    selected_layers = st.multiselect(
-        "Select Layers",
-        options=list(layer_options.keys()),
-        help="Choose one or more layers to download",
-        key=f"layer_selector_{source_id}_{len(layer_options)}"  # Unique key per source
-    )
-    
-    if selected_layers:
-        # Display selected layer details
-        with st.expander("📋 Selected Layer Details"):
-            for layer_name in selected_layers:
-                layer = layer_options[layer_name]
-                layer_info = layer['info']
-                st.write(f"**{layer_info['name']}**")
-                st.write(f"- Description: {layer_info['description']}")
-                st.write(f"- Geometry Type: {layer_info['geometry_type']}")
-                st.write(f"- Data Type: {layer_info['data_type']}")
-                st.write("---")
-        
-        # USGS-specific contour generation options
-        config_options = {}
-        if source_id == 'usgs_lidar':
-            st.subheader("⛰️ Contour Generation Options")
+        # Checkbox for each source
+        if st.checkbox(source_name, help=source_data['description']):
+            selected_sources.append(source_id)
             
-            generate_contours = st.checkbox(
-                "Generate Contour Lines",
-                value=False,
-                help="Generate contour line shapefiles from the DEM data",
-                key=f"generate_contours_{source_id}"
-            )
+            # Add all layers from this source
+            layer_ids = list(source_info['layers'].keys())
+            all_layer_ids.extend(layer_ids)
             
-            if generate_contours:
-                contour_interval = st.number_input(
-                    "Contour Interval (feet)",
-                    min_value=1,
-                    max_value=100,
-                    value=5,
-                    step=1,
-                    help="Vertical interval between contour lines in feet",
-                    key=f"contour_interval_{source_id}"
+            # Show layer count
+            st.write(f"  📋 {len(layer_ids)} layers included")
+            
+            # USGS-specific contour generation options
+            if source_id == 'usgs_lidar':
+                st.write("  ⛰️ **Elevation Options:**")
+                
+                generate_contours = st.checkbox(
+                    "  Generate Contour Lines",
+                    value=False,
+                    help="Generate contour line shapefiles from the DEM data",
+                    key=f"contours_{source_id}"
                 )
                 
-                config_options['contour_interval'] = contour_interval
-                
-                st.info(f"📏 Contours will be generated every {contour_interval} feet")
-        
-        layer_ids = [layer_options[name]['id'] for name in selected_layers]
-        return source_id, layer_ids, config_options
+                if generate_contours:
+                    contour_interval = st.number_input(
+                        "  Contour Interval (feet)",
+                        min_value=1,
+                        max_value=100,
+                        value=5,
+                        step=1,
+                        help="Vertical interval between contour lines in feet",
+                        key=f"interval_{source_id}"
+                    )
+                    all_config_options['contour_interval'] = contour_interval
+                    st.write(f"    📏 Contours every {contour_interval} feet")
     
-    return source_id, None, {}
+    if not selected_sources:
+        return None, None, {}
+    
+    # Summary of selection
+    if len(selected_sources) > 1:
+        st.success(f"✅ Selected {len(selected_sources)} datasets with {len(all_layer_ids)} total layers")
+        
+        # Show what's included
+        with st.expander("📋 Selection Summary"):
+            for source_id in selected_sources:
+                source_info = sources[source_id]
+                st.write(f"**{source_id.upper()}**: {len(source_info['layers'])} layers")
+    else:
+        st.info(f"📝 Selected: {selected_sources[0].upper()} ({len(all_layer_ids)} layers)")
+    
+    # For the API, we'll need to create separate jobs for each source
+    # Return the first source for now, but we'll modify the job creation to handle multiple
+    return selected_sources, all_layer_ids, all_config_options
 
-def create_download_job(source_id, layer_ids, config_options=None, aoi_bounds=None, aoi_geometry=None):
-    """Create and submit download job"""
+def create_download_jobs(source_ids, sources_dict, config_options=None, aoi_bounds=None, aoi_geometry=None):
+    """Create download jobs for multiple sources"""
+    if isinstance(source_ids, str):
+        # Single source - use original logic
+        return create_single_download_job(source_ids, sources_dict, config_options, aoi_bounds, aoi_geometry)
+    
+    # Multiple sources - create separate jobs
+    job_ids = []
+    errors = []
+    
+    with st.spinner(f"Creating {len(source_ids)} download jobs... (This may take up to 2 minutes for NOAA data)"):
+        for source_id in source_ids:
+            try:
+                source_info = sources_dict[source_id]
+                layer_ids = list(source_info['layers'].keys())
+                
+                job_data = {
+                    'downloader_id': source_id,
+                    'layer_ids': layer_ids,
+                    'config': config_options if source_id == 'usgs_lidar' else {}
+                }
+                
+                if aoi_bounds:
+                    job_data['aoi_bounds'] = aoi_bounds
+                elif aoi_geometry:
+                    job_data['aoi_geometry'] = aoi_geometry
+                
+                # Show individual progress for slow downloaders
+                if source_id == 'noaa_atlas14':
+                    st.info(f"⏳ Creating NOAA Atlas 14 job... (this can take 1-2 minutes)")
+                
+                job_response = st.session_state.api_client.create_job(job_data)
+                job_ids.append({
+                    'job_id': job_response['job_id'],
+                    'source_id': source_id,
+                    'layer_count': len(layer_ids)
+                })
+                
+                st.success(f"✅ {source_id.upper()} job created successfully")
+                
+            except Exception as e:
+                error_msg = str(e)
+                if "timed out" in error_msg.lower():
+                    errors.append(f"{source_id}: Job creation timed out - try selecting {source_id.upper()} alone or check if the service is available")
+                else:
+                    errors.append(f"{source_id}: {error_msg}")
+    
+    if errors:
+        return None, f"Failed to create some jobs: {'; '.join(errors)}"
+    
+    return job_ids, None
+
+def create_single_download_job(source_id, sources_dict, config_options=None, aoi_bounds=None, aoi_geometry=None):
+    """Create single download job - original version"""
     try:
         with st.spinner("Creating download job..."):
+            if isinstance(source_id, list):
+                source_id = source_id[0]  # Take first if list
+            
+            source_info = sources_dict[source_id]
+            layer_ids = list(source_info['layers'].keys())
+            
             job_data = {
                 'downloader_id': source_id,
                 'layer_ids': layer_ids,
@@ -368,17 +449,189 @@ def create_download_job(source_id, layer_ids, config_options=None, aoi_bounds=No
             if aoi_bounds:
                 job_data['aoi_bounds'] = aoi_bounds
             elif aoi_geometry:
-                job_data['aoi_geometry'] = aoi_geometry['features'][0]['geometry']
-            
-            # Debug: Show what's being sent to API
-            with st.expander("🔍 Debug: Job Request", expanded=False):
-                st.json(job_data)
+                job_data['aoi_geometry'] = aoi_geometry
             
             job_response = st.session_state.api_client.create_job(job_data)
             return job_response['job_id'], None
             
     except Exception as e:
         return None, f"Failed to create job: {str(e)}"
+
+def monitor_job_progress(job_id):
+    """Monitor and display job progress - original version"""
+    st.subheader("⏳ Job Progress")
+    
+    # Create progress container
+    progress_container = st.container()
+    status_container = st.container()
+    
+    with progress_container:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+    
+    # Poll for updates
+    max_attempts = 300  # 5 minutes with 1-second intervals
+    attempt = 0
+    
+    while attempt < max_attempts:
+        try:
+            job_status = st.session_state.api_client.get_job_status(job_id)
+            status = job_status['status']
+            
+            # Update progress bar based on status
+            if status == 'pending':
+                progress_bar.progress(10)
+                status_text.info("⏳ Job pending...")
+            elif status == 'running':
+                # Use progress from API if available
+                progress_data = job_status.get('progress', {})
+                if 'percentage' in progress_data:
+                    progress_val = min(progress_data['percentage'] / 100, 0.95)
+                else:
+                    progress_val = 0.5
+                progress_bar.progress(progress_val)
+                status_text.info("🔄 Processing data...")
+            elif status == 'completed':
+                progress_bar.progress(100)
+                status_text.success("✅ Job completed successfully!")
+                
+                # Display results without balloons
+                with status_container:
+                    display_job_results(job_status)
+                break
+            elif status == 'failed':
+                progress_bar.progress(0)
+                error_msg = job_status.get('error_message', 'Unknown error')
+                status_text.error(f"❌ Job failed: {error_msg}")
+                break
+            
+            time.sleep(1)
+            attempt += 1
+            
+        except Exception as e:
+            st.error(f"Error monitoring job: {str(e)}")
+            break
+    
+    if attempt >= max_attempts:
+        st.warning("Job monitoring timed out. Please check job status manually.")
+
+def display_job_results(job_status):
+    """Display job results and download options - original working version"""
+    result_summary = job_status.get('result_summary')
+    if not result_summary:
+        st.warning("No result summary available")
+        return
+    
+    st.subheader("📊 Download Results")
+    
+    # Display summary metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Layers", result_summary['total_layers'])
+    
+    with col2:
+        st.metric("Successful", result_summary['successful_layers'])
+    
+    with col3:
+        st.metric("Failed", result_summary['failed_layers'])
+    
+    with col4:
+        st.metric("Features", result_summary['total_features'])
+    
+    # Success rate indicator
+    success_rate = result_summary['success_rate'] * 100
+    if success_rate == 100:
+        st.success(f"🎉 All layers downloaded successfully! ({success_rate:.1f}% success rate)")
+    elif success_rate >= 75:
+        st.warning(f"⚠️ Most layers downloaded successfully ({success_rate:.1f}% success rate)")
+    else:
+        st.error(f"❌ Many layers failed to download ({success_rate:.1f}% success rate)")
+    
+    # Download options - original working version
+    if result_summary['has_download']:
+        st.subheader("💾 Download Options")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📦 Download ZIP", type="primary"):
+                download_url = f"{Config.API_BASE_URL}{result_summary['download_url']}"
+                st.markdown(f'<a href="{download_url}" target="_blank">Click here to download</a>', unsafe_allow_html=True)
+        
+        with col2:
+            if st.button("🔍 View Data Preview"):
+                display_data_preview(job_status['job_id'])
+        
+        with col3:
+            if st.button("📋 Download Summary"):
+                download_url = f"{Config.API_BASE_URL}{result_summary['summary_url']}"
+                st.markdown(f'<a href="{download_url}" target="_blank">Click here to download summary</a>', unsafe_allow_html=True)
+
+def display_data_preview(job_id):
+    """Display data preview - original version"""
+    try:
+        with st.spinner("Loading data preview..."):
+            preview_data = st.session_state.api_client.get_job_preview(job_id)
+            
+            if preview_data and preview_data.get('sample_geojson'):
+                st.subheader("🔍 Data Preview")
+                
+                # Show preview stats
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Preview Features", preview_data['feature_count'])
+                with col2:
+                    st.metric("Total Features", preview_data['total_features'])
+                
+                # Create map with preview data
+                geojson = preview_data['sample_geojson']
+                if geojson['features']:
+                    # Create simple folium map
+                    m = folium.Map(location=[40, -95], zoom_start=4)
+                    
+                    # Add preview data
+                    folium.GeoJson(
+                        geojson,
+                        style_function=lambda x: {
+                            'fillColor': 'green',
+                            'color': 'blue',
+                            'weight': 1,
+                            'fillOpacity': 0.3
+                        }
+                    ).add_to(m)
+                    
+                    # Display map
+                    st_folium(m, width=700, height=400)
+                    
+                    # Show feature sample
+                    if st.checkbox("Show Feature Details"):
+                        st.json(geojson['features'][0] if geojson['features'] else {})
+            else:
+                st.info("No preview data available for this job")
+                
+    except Exception as e:
+        st.error(f"Error loading preview: {str(e)}")
+
+
+
+def display_job_history():
+    """Display recent job history"""
+    if 'job_history' not in st.session_state:
+        st.session_state.job_history = []
+    
+    if st.session_state.job_history:
+        with st.expander("📊 Recent Downloads"):
+            for job in st.session_state.job_history[-5:]:  # Show last 5
+                col1, col2, col3 = st.columns([2, 1, 1])
+                with col1:
+                    st.write(f"**{job['source_id']}** - {len(job['layer_ids'])} layers")
+                with col2:
+                    st.write(job['status'])
+                with col3:
+                    if st.button(f"🔄 Repeat", key=f"repeat_{job['job_id']}"):
+                        # Implement repeat functionality
+                        pass
 
 def monitor_job_progress(job_id):
     """Monitor and display job progress"""
@@ -439,11 +692,13 @@ def monitor_job_progress(job_id):
         st.warning("Job monitoring timed out. Please check job status manually.")
 
 def display_job_results(job_status):
-    """Display job results and download options"""
+    """Display job results and download options with persistent links"""
     result_summary = job_status.get('result_summary')
     if not result_summary:
         st.warning("No result summary available")
         return
+    
+    job_id = job_status['job_id']
     
     st.subheader("📊 Download Results")
     
@@ -471,25 +726,50 @@ def display_job_results(job_status):
     else:
         st.error(f"❌ Many layers failed to download ({success_rate:.1f}% success rate)")
     
-    # Download options
+    # Persistent download options
     if result_summary['has_download']:
         st.subheader("💾 Download Options")
         
-        col1, col2, col3 = st.columns(3)
+        # Store download URLs in session state immediately
+        if job_id not in st.session_state.persistent_downloads:
+            st.session_state.persistent_downloads[job_id] = {
+                'zip_url': f"{Config.API_BASE_URL}{result_summary['download_url']}",
+                'summary_url': f"{Config.API_BASE_URL}{result_summary.get('summary_url', '')}",
+                'job_name': f"Job_{job_id}",
+                'created_at': time.time()
+            }
+        
+        # Display persistent download links
+        download_info = st.session_state.persistent_downloads[job_id]
+        
+        st.success("✅ **Your download links are ready and will remain available:**")
+        
+        # Main ZIP download - always visible
+        st.markdown(f"""
+        ### 📦 Main Dataset Download
+        **[Download Complete Dataset ZIP]({download_info['zip_url']})**
+        
+        *Right-click and "Save As" if the file opens in browser*
+        """)
+        
+        # Summary download if available
+        if download_info['summary_url']:
+            st.markdown(f"""
+            ### 📋 Summary Report
+            **[Download Summary Report]({download_info['summary_url']})**
+            """)
+        
+        # Additional options in columns
+        col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("📦 Download ZIP", type="primary"):
-                download_url = f"{Config.API_BASE_URL}{result_summary['download_url']}"
-                st.markdown(f'<a href="{download_url}" target="_blank">Click here to download</a>', unsafe_allow_html=True)
+            if st.button("🗺️ View Data Preview", key=f"preview_{job_id}"):
+                display_data_preview(job_id)
         
         with col2:
-            if st.button("🗺️ View Data Preview"):
-                display_data_preview(job_status['job_id'])
-        
-        with col3:
-            if st.button("📋 Download Summary"):
-                download_url = f"{Config.API_BASE_URL}{result_summary['summary_url']}"
-                st.markdown(f'<a href="{download_url}" target="_blank">Click here to download summary</a>', unsafe_allow_html=True)
+            if st.button("📋 Copy Download URL", key=f"copy_{job_id}"):
+                st.code(download_info['zip_url'])
+                st.info("💡 Copy the URL above to download later")
 
 def display_data_preview(job_id):
     """Display data preview"""
@@ -623,146 +903,321 @@ def main():
             st.write(f"**Type:** Bounding Box")
             st.write(f"**Bounds:** {bounds['minx']:.4f}, {bounds['miny']:.4f} to {bounds['maxx']:.4f}, {bounds['maxy']:.4f}")
     
-    # Main content area
-    col1, col2 = st.columns([2, 1])
+    # Show settings panel if requested  
+    if st.session_state.get('show_settings', False):
+        st.info("Settings panel temporarily disabled - smart recommendations feature removed.")
+        st.session_state.show_settings = False
     
-    with col1:
-        st.subheader("🗺️ AOI Visualization")
-        
-        # Display map
-        if st.session_state.uploaded_aoi:
-            map_obj = create_map(aoi_data=st.session_state.uploaded_aoi)
-        elif st.session_state.aoi_bounds:
-            map_obj = create_map(bounds=st.session_state.aoi_bounds)
-        else:
-            map_obj = create_map()
-            st.info("👆 Please define an AOI using the sidebar to see it on the map")
-        
-        st_folium(map_obj, width=700, height=500)
+    # Main content area with unified map
+    st.subheader("🗺️ Interactive Map Interface")
     
-    with col2:
-        st.subheader("🎮 Quick Actions")
+    # Display unified map interface
+    new_geometry, new_bounds = display_unified_map_interface()
+    
+    # Handle new AOI from map drawing (prevent infinite loop)
+    if new_geometry and new_bounds:
+        st.session_state.aoi_geometry = new_geometry
+        st.session_state.aoi_bounds = new_bounds
+        # Clear uploaded AOI if user draws new one
+        if 'uploaded_aoi' in st.session_state:
+            del st.session_state.uploaded_aoi
+        # Don't rerun immediately - let user see the results first
+    
+    # Sidebar with enhanced quick actions
+    with st.sidebar:
+        st.header("🎮 Quick Actions")
         
         # API connection status
         try:
             health = st.session_state.api_client.health_check()
             st.success("✅ API Connected")
-        except:
+        except Exception as e:
             st.error("❌ API Disconnected")
+            st.error(f"Error: {str(e)}")
             st.stop()
         
-        # Load data sources button
+        # Quick action buttons
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🔄 Refresh Data Sources"):
+            if st.button("🔄 Refresh", help="Reload data sources (Ctrl+R)"):
                 load_data_sources()
-        with col2:
-            if st.button("🗑️ Clear Selection"):
-                # Clear all selection-related session state
-                for key in list(st.session_state.keys()):
-                    if 'selector' in key or 'selected' in key:
-                        del st.session_state[key]
                 st.rerun()
         
-        # Show current job status
-        if st.session_state.current_job_id:
-            try:
-                job_status = st.session_state.api_client.get_job_status(st.session_state.current_job_id)
-                st.write(f"**Current Job:** {st.session_state.current_job_id}")
-                st.write(f"**Status:** {job_status['status']}")
-            except:
-                st.session_state.current_job_id = None
+        with col2:
+            if st.button("🗑️ Clear", help="Clear all selections (Esc)"):
+                # Clear all selection-related session state
+                keys_to_clear = [k for k in st.session_state.keys() 
+                               if any(x in k for x in ['selector', 'selected', 'aoi_', 'current_job'])]
+                for key in keys_to_clear:
+                    del st.session_state[key]
+                st.rerun()
+        
+        # Show recent activity
+        if st.session_state.get('last_successful_download'):
+            recent = st.session_state.last_successful_download
+            st.write("**Last Download:**")
+            st.write(f"Source: {recent['source_id']}")
+            st.write(f"Layers: {len(recent['layer_ids'])}")
+            
+            if st.button("🔄 Repeat Last Download"):
+                # Simple repeat functionality - could be enhanced later
+                st.info(f"Last download was {recent['source_id']} with {len(recent['layer_ids'])} layers")
     
-    # Data source selection and download
-    if st.session_state.aoi_bounds or st.session_state.aoi_geometry:
+    # Enhanced data source selection and download
+    if st.session_state.aoi_bounds or st.session_state.aoi_geometry or st.session_state.uploaded_aoi:
         # Load data sources if not already loaded
         if not st.session_state.available_sources:
             load_data_sources()
         
         if st.session_state.available_sources:
-            source_id, layer_ids, config_options = display_data_source_selection(st.session_state.available_sources)
+            # Simple data source selection (now supports multiple)
+            selected_sources, layer_ids, config_options = display_simple_data_selection(st.session_state.available_sources)
             
-            if source_id and layer_ids:
+            if selected_sources and layer_ids:
                 st.subheader("🚀 Start Download")
                 
-                if st.button("Start Download Job", type="primary"):
-                    job_id, error = create_download_job(
-                        source_id, 
-                        layer_ids,
+                # Show what will be downloaded
+                if isinstance(selected_sources, list) and len(selected_sources) > 1:
+                    st.write(f"**Ready to download {len(selected_sources)} datasets:**")
+                    for source_id in selected_sources:
+                        source_info = st.session_state.available_sources[source_id]
+                        st.write(f"  • {source_id.upper()}: {len(source_info['layers'])} layers")
+                
+                if st.button("Start Download Job(s)", type="primary"):
+                    jobs_result, error = create_download_jobs(
+                        selected_sources,
+                        st.session_state.available_sources,
                         config_options=config_options,
                         aoi_bounds=st.session_state.aoi_bounds,
                         aoi_geometry=st.session_state.aoi_geometry
                     )
                     
-                    if job_id:
-                        st.session_state.current_job_id = job_id
-                        st.success(f"Job created: {job_id}")
+                    if jobs_result:
+                        if isinstance(jobs_result, list):
+                            # Multiple jobs created
+                            st.session_state.current_jobs = jobs_result
+                            st.success(f"✅ Created {len(jobs_result)} download jobs!")
+                            for job in jobs_result:
+                                st.write(f"  • {job['source_id'].upper()}: Job {job['job_id']}")
+                        else:
+                            # Single job created (backwards compatibility)
+                            st.session_state.current_job_id = jobs_result
+                            st.success(f"Job created: {jobs_result}")
                         st.rerun()
                     else:
                         st.error(error)
     
-    # Monitor current job
-    if st.session_state.current_job_id:
+    # Monitor current jobs
+    if st.session_state.get('current_jobs'):
+        monitor_multiple_jobs(st.session_state.current_jobs)
+    elif st.session_state.get('current_job_id'):
         monitor_job_progress(st.session_state.current_job_id)
-    
     else:
-        # Enhanced AOI Definition Interface
-        if st.button("🔄 Switch to Enhanced AOI Drawing"):
-            st.session_state.use_enhanced_aoi = True
-            st.rerun()
+        # Help and tutorial for new users
+        show_tutorials = st.session_state.get('show_tutorials', True)
+        if show_tutorials:
+            st.info("👋 **Welcome!** Define an Area of Interest (AOI) using the sidebar or by drawing on the map above to get started.")
             
-        st.info("👆 Please define an AOI and select data sources to start downloading geospatial data")
+            with st.expander("📖 Quick Tutorial", expanded=False):
+                st.markdown("""
+                **Getting Started:**
+                1. 📍 **Define your AOI** - Upload a shapefile, enter coordinates, or draw on the map
+                2. 📊 **Select data sources** - Choose from FEMA flood data, USGS elevation, or NOAA precipitation
+                3. 🚀 **Download** - Start your job and get automatic downloads
+                
+                **Pro Tips:**
+                - Choose appropriate data sources based on your analysis needs
+                - Try keyboard shortcuts: Ctrl+R (refresh), Esc (clear)
+                - Use the enhanced data selection interface for better organization
+                """)
+        
+        # Show available data sources summary
+        if st.session_state.available_sources:
+            st.subheader("📋 Available Data Sources")
+            source_count = len([s for s in st.session_state.available_sources.values() if s])
+            st.write(f"**{source_count} data sources ready** - Define an AOI to begin selection")
+            
+            # Quick preview of available sources
+            cols = st.columns(min(3, source_count))
+            for i, (source_id, source_info) in enumerate(st.session_state.available_sources.items()):
+                if source_info and i < 3:
+                    with cols[i]:
+                        st.write(f"**{source_info['name']}**")
+                        st.write(f"{len(source_info['layers'])} layers")
+                        st.write(f"_{source_info['description'][:50]}..._")
     
-    # Enhanced AOI Drawing Interface (optional alternative)
-    if st.session_state.get('use_enhanced_aoi', False):
-        st.markdown("---")
-        st.header("🎨 Enhanced AOI Drawing Tools")
-        
-        # Use the enhanced drawing interface
-        aoi_geometry, aoi_bounds = display_aoi_drawing_interface()
-        
-        if aoi_geometry and aoi_bounds:
-            st.session_state.aoi_geometry = aoi_geometry
-            st.session_state.aoi_bounds = aoi_bounds
-            st.session_state.use_enhanced_aoi = False  # Switch back to main interface
-            st.success("✅ AOI defined using enhanced drawing tools!")
-            st.rerun()
+    # Display persistent downloads section (always visible if downloads exist)
+    display_persistent_downloads()
+
+# Add footer with tips
+def display_footer():
+    """Display footer with helpful information"""
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
     
-    # CAD Export Section
-    if st.session_state.current_job_id:
-        st.markdown("---")
-        st.subheader("🛠️ CAD Export Options")
+    with col1:
+        st.markdown("**🎯 Tips:**")
+        st.markdown("• Use Ctrl+R to refresh data")
+        st.markdown("• ESC clears all selections")
+    
+    with col2:
+        st.markdown("**📊 Support:**")
+        st.markdown("• Check the tutorial above")
+        st.markdown("• Use enhanced data selection")
+    
+    with col3:
+        st.markdown("**⚙️ Customize:**")
+        st.markdown("• Enhanced data selection interface")
+        st.markdown("• Direct downloads with progress tracking")
+
+def monitor_multiple_jobs(jobs_list):
+    """Monitor multiple jobs simultaneously"""
+    st.subheader(f"⏳ Monitoring {len(jobs_list)} Download Jobs")
+    
+    # Create containers for each job
+    job_containers = {}
+    for job in jobs_list:
+        job_id = job['job_id']
+        source_id = job['source_id']
         
-        if st.button("📐 Export to CAD (DXF)"):
+        with st.container():
+            st.write(f"**{source_id.upper()}** (Job: {job_id})")
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                progress_bar = st.progress(0)
+            with col2:
+                status_text = st.empty()
+            
+            job_containers[job_id] = {
+                'progress_bar': progress_bar,
+                'status_text': status_text,
+                'source_id': source_id,
+                'completed': False
+            }
+    
+    # Monitor all jobs
+    max_attempts = 300
+    attempt = 0
+    completed_jobs = []
+    
+    while attempt < max_attempts and len(completed_jobs) < len(jobs_list):
+        all_completed = True
+        
+        for job in jobs_list:
+            job_id = job['job_id']
+            if job_id in completed_jobs:
+                continue
+                
             try:
-                with st.spinner("Exporting to CAD format..."):
-                    from pathlib import Path
-                    
-                    # Get job directory
-                    job_dir = Path(f"output/results/{st.session_state.current_job_id}")
-                    
-                    if job_dir.exists():
-                        # Export to CAD
-                        cad_files = export_job_to_cad_formats(st.session_state.current_job_id, job_dir)
-                        
-                        if cad_files.get('dxf'):
-                            st.success("✅ CAD export completed!")
-                            
-                            # Provide download link
-                            with open(cad_files['dxf'], 'rb') as f:
-                                st.download_button(
-                                    label="📥 Download DXF File",
-                                    data=f.read(),
-                                    file_name=f"{st.session_state.current_job_id}_export.dxf",
-                                    mime="application/dxf"
-                                )
-                        else:
-                            st.error("❌ CAD export failed. No vector data found in job results.")
+                job_status = st.session_state.api_client.get_job_status(job_id)
+                status = job_status['status']
+                container = job_containers[job_id]
+                
+                if status == 'pending':
+                    container['progress_bar'].progress(10)
+                    container['status_text'].write("⏳ Pending")
+                    all_completed = False
+                elif status == 'running':
+                    progress_data = job_status.get('progress', {})
+                    if 'percentage' in progress_data:
+                        progress_val = min(progress_data['percentage'] / 100, 0.95)
                     else:
-                        st.error("❌ Job results not found.")
+                        progress_val = 0.5
+                    container['progress_bar'].progress(progress_val)
+                    container['status_text'].write("🔄 Running")
+                    all_completed = False
+                elif status == 'completed':
+                    container['progress_bar'].progress(100)
+                    container['status_text'].write("✅ Complete")
+                    if job_id not in completed_jobs:
+                        completed_jobs.append(job_id)
+                        # Store persistent download for this job
+                        result_summary = job_status.get('result_summary')
+                        if result_summary and result_summary.get('has_download'):
+                            if job_id not in st.session_state.persistent_downloads:
+                                st.session_state.persistent_downloads[job_id] = {
+                                    'zip_url': f"{Config.API_BASE_URL}{result_summary['download_url']}",
+                                    'summary_url': f"{Config.API_BASE_URL}{result_summary.get('summary_url', '')}",
+                                    'job_name': f"{container['source_id'].upper()}_Job_{job_id}",
+                                    'source_id': container['source_id'],
+                                    'created_at': time.time()
+                                }
+                elif status == 'failed':
+                    container['progress_bar'].progress(0)
+                    error_msg = job_status.get('error_message', 'Unknown error')
+                    container['status_text'].write(f"❌ Failed")
+                    st.error(f"{container['source_id'].upper()} failed: {error_msg}")
+                    if job_id not in completed_jobs:
+                        completed_jobs.append(job_id)  # Don't retry failed jobs
                         
             except Exception as e:
-                st.error(f"❌ CAD export error: {str(e)}")
+                container['status_text'].write(f"❌ Error")
+                st.error(f"Error monitoring {container['source_id']}: {str(e)}")
+        
+        if all_completed:
+            break
+            
+        time.sleep(2)
+        attempt += 1
+    
+    # Summary
+    if len(completed_jobs) == len(jobs_list):
+        st.success(f"🎉 All {len(jobs_list)} jobs completed!")
+        # Clear the jobs from session state
+        del st.session_state.current_jobs
+    elif attempt >= max_attempts:
+        st.warning("Some jobs are still running. Please check back later.")
+
+def display_persistent_downloads():
+    """Display all available persistent downloads"""
+    if not st.session_state.persistent_downloads:
+        return
+    
+    st.subheader("📥 Available Downloads")
+    st.write("Your completed downloads are ready and will remain available during this session:")
+    
+    # Sort downloads by creation time (newest first)
+    downloads = sorted(
+        st.session_state.persistent_downloads.items(),
+        key=lambda x: x[1]['created_at'],
+        reverse=True
+    )
+    
+    for job_id, download_info in downloads:
+        with st.container():
+            # Create a card-like display for each download
+            st.markdown(f"""
+            <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin: 10px 0; background-color: #f9f9f9;">
+                <h4 style="margin: 0 0 10px 0;">📦 {download_info.get('job_name', f'Job_{job_id}')}</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                # Main download link
+                st.markdown(f"""
+                **[📥 Download ZIP File]({download_info['zip_url']})**
+                
+                *Job ID: {job_id}*
+                """)
+            
+            with col2:
+                # Copy URL button
+                if st.button("📋 Copy URL", key=f"copy_persistent_{job_id}"):
+                    st.code(download_info['zip_url'])
+            
+            with col3:
+                # Delete button
+                if st.button("🗑️ Remove", key=f"delete_persistent_{job_id}", help="Remove from list (files remain available)"):
+                    del st.session_state.persistent_downloads[job_id]
+                    st.rerun()
+            
+            st.markdown("---")
 
 if __name__ == "__main__":
     main()
+    
+    # Display footer
+    display_footer()

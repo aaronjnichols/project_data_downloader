@@ -35,7 +35,7 @@ class GeospatialAPIClient:
     with proper error handling, retries, and response validation.
     """
     
-    def __init__(self, base_url: str, timeout: int = 30):
+    def __init__(self, base_url: str, timeout: int = 60):
         """
         Initialize the API client
         
@@ -193,7 +193,57 @@ class GeospatialAPIClient:
         Returns:
             Job creation response with job_id and status
         """
-        return self._make_request('POST', '/jobs', data=job_request)
+        # Use longer timeout for job creation (some downloaders like NOAA can be slow)
+        return self._make_request_with_timeout('POST', '/jobs', data=job_request, timeout=120)
+    
+    def _make_request_with_timeout(
+        self, 
+        method: str, 
+        endpoint: str, 
+        data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: int = None,
+        retries: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Make HTTP request with custom timeout
+        """
+        url = f"{self.base_url}{endpoint}"
+        request_timeout = timeout or self.timeout
+        
+        for attempt in range(retries + 1):
+            try:
+                if method.upper() == 'GET':
+                    response = self.session.get(url, params=params, timeout=request_timeout)
+                elif method.upper() == 'POST':
+                    response = self.session.post(url, json=data, timeout=request_timeout)
+                elif method.upper() == 'DELETE':
+                    response = self.session.delete(url, timeout=request_timeout)
+                else:
+                    raise APIClientError(f"Unsupported HTTP method: {method}")
+                
+                # Check for HTTP errors
+                response.raise_for_status()
+                
+                # Parse JSON response
+                try:
+                    return response.json()
+                except json.JSONDecodeError:
+                    return {"raw_response": response.text}
+                    
+            except requests.exceptions.Timeout:
+                if attempt == retries:
+                    raise APIClientError(f"Request timed out after {request_timeout} seconds")
+                logger.warning(f"Request timeout on attempt {attempt + 1}, retrying...")
+                time.sleep(2 ** attempt)  # Exponential backoff
+                
+            except requests.exceptions.RequestException as e:
+                if attempt == retries:
+                    raise APIClientError(f"Request failed: {str(e)}")
+                logger.warning(f"Request failed on attempt {attempt + 1}, retrying...")
+                time.sleep(2 ** attempt)
+        
+        raise APIClientError("Maximum retries exceeded")
     
     def get_job_status(self, job_id: str) -> Dict[str, Any]:
         """
