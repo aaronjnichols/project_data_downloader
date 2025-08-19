@@ -451,6 +451,8 @@ class USGSLidarDownloader(BaseDownloader):
         Returns:
             True if conversion successful, False otherwise
         """
+        logger = logging.getLogger(__name__)
+        
         try:
             import ezdxf
             import geopandas as gpd

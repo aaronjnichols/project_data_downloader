@@ -228,7 +228,7 @@ def process_shapefile_upload(uploaded_files):
             geojson = json.loads(gdf.to_json())
             
             # Get union of all geometries for display
-            union_geom = gdf.geometry.unary_union
+            union_geom = gdf.geometry.union_all()
             
             return {
                 'gdf': gdf,

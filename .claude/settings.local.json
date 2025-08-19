@@ -20,7 +20,8 @@
       "Bash(git push:*)",
       "Bash(git commit:*)",
       "Bash(find:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(make test-unit:*)"
     ],
     "defaultMode": "acceptEdits"
   }
