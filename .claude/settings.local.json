@@ -18,7 +18,9 @@
       "Bash(git add:*)",
       "Bash(rm:*)",
       "Bash(git push:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(find:*)",
+      "Bash(tree:*)"
     ],
     "defaultMode": "acceptEdits"
   }

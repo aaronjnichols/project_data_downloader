@@ -143,4 +143,19 @@ coverage.xml
 # mypy
 .mypy_cache/
 .dmypy.json
-dmypy.json 
+dmypy.json
+
+# Pre-commit
+.pre-commit-cache/
+
+# Security reports
+bandit-report.json
+safety-report.json
+
+# Build artifacts
+*.whl
+*.tar.gz
+
+# IDE specific
+.vscode/settings.json
+.vscode/launch.json 
