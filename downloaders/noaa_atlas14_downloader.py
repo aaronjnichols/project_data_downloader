@@ -19,49 +19,14 @@ logger = logging.getLogger(__name__)
 class NOAAAtlas14Downloader(BaseDownloader):
     """NOAA Atlas 14 precipitation frequency data downloader"""
     
-    # Available data layers - combinations of analysis method, data type, and units
+    # Available data layer - Only depth frequency estimates in inches
     AVAILABLE_LAYERS = {
         "pds_depth_english": LayerInfo(
             id="pds_depth_english",
-            name="PDS Precipitation Depths (inches)",
-            description="Partial Duration Series precipitation frequency estimates in inches",
+            name="Precipitation Depth Frequency Estimates (inches)",
+            description="Precipitation frequency estimates for various durations and return periods in inches",
             geometry_type="Point", 
             data_type="Tabular"
-        ),
-        "pds_depth_metric": LayerInfo(
-            id="pds_depth_metric", 
-            name="PDS Precipitation Depths (mm)",
-            description="Partial Duration Series precipitation frequency estimates in millimeters",
-            geometry_type="Point",
-            data_type="Tabular"  
-        ),
-        "pds_intensity_english": LayerInfo(
-            id="pds_intensity_english",
-            name="PDS Precipitation Intensities (in/hr)", 
-            description="Partial Duration Series precipitation intensity estimates in inches per hour",
-            geometry_type="Point",
-            data_type="Tabular"
-        ),
-        "pds_intensity_metric": LayerInfo(
-            id="pds_intensity_metric",
-            name="PDS Precipitation Intensities (mm/hr)",
-            description="Partial Duration Series precipitation intensity estimates in mm per hour", 
-            geometry_type="Point",
-            data_type="Tabular"
-        ),
-        "ams_depth_english": LayerInfo(
-            id="ams_depth_english",
-            name="AMS Precipitation Depths (inches)",
-            description="Annual Maximum Series precipitation frequency estimates in inches",
-            geometry_type="Point", 
-            data_type="Tabular"
-        ),
-        "ams_depth_metric": LayerInfo(
-            id="ams_depth_metric", 
-            name="AMS Precipitation Depths (mm)",
-            description="Annual Maximum Series precipitation frequency estimates in millimeters",
-            geometry_type="Point",
-            data_type="Tabular"  
         )
     }
     

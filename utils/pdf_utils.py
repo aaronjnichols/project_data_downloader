@@ -81,30 +81,34 @@ class NOAAPrecipitationReport:
         fig, ax = plt.subplots(figsize=(self.page_width, self.page_height))
         ax.axis('off')
         
-        # Title
-        title = "NOAA Atlas 14 Precipitation Frequency Estimates"
-        fig.suptitle(title, fontsize=16, fontweight='bold', y=0.96)
+        # Set tight layout and margins to fit within page bounds
+        plt.subplots_adjust(left=0.08, right=0.92, top=0.92, bottom=0.08)
         
-        # Metadata section - positioned higher and made more compact
+        # Title - positioned within page bounds
+        title = "NOAA Atlas 14 Precipitation Frequency Estimates"
+        ax.text(0.5, 0.95, title, transform=ax.transAxes, fontsize=14, fontweight='bold',
+                ha='center', va='top')
+        
+        # Metadata section - centered on page
         meta_text = self._format_metadata_text(metadata)
-        ax.text(0.05, 0.92, meta_text, transform=ax.transAxes, fontsize=9,
-                verticalalignment='top', fontfamily='monospace',
-                bbox=dict(boxstyle="round,pad=0.4", facecolor="lightgray", alpha=0.3))
+        ax.text(0.5, 0.88, meta_text, transform=ax.transAxes, fontsize=8,
+                verticalalignment='top', fontfamily='monospace', ha='center',
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.3))
         
         # Prepare table data
         table_data = self._prepare_table_data(df)
         
-        # Create table - positioned lower to avoid overlap
+        # Create table - adjusted size and position to fit page
         table = ax.table(cellText=table_data['data'],
                         colLabels=table_data['headers'],
                         cellLoc='center',
                         loc='center',
-                        bbox=[0.05, 0.08, 0.9, 0.55])
+                        bbox=[0.05, 0.12, 0.9, 0.48])
         
-        # Style the table
+        # Style the table with smaller font to fit better
         table.auto_set_font_size(False)
-        table.set_fontsize(7)
-        table.scale(1, 1.2)
+        table.set_fontsize(6)
+        table.scale(1, 1.1)
         
         # Header styling
         for i in range(len(table_data['headers'])):
@@ -117,19 +121,23 @@ class NOAAPrecipitationReport:
                 for j in range(len(table_data['headers'])):
                     table[(i, j)].set_facecolor('#F2F2F2')
         
-        # Footer note - positioned at the bottom
+        # Footer note - positioned at bottom within margins
         footer_text = ("Notes: Precipitation frequency estimates are based on NOAA Atlas 14. PDS = Partial Duration Series. Values are in inches.\n"
                       "These estimates represent statistical averages and should be used with appropriate engineering judgment.")
-        ax.text(0.05, 0.02, footer_text, transform=ax.transAxes, fontsize=7,
+        ax.text(0.05, 0.05, footer_text, transform=ax.transAxes, fontsize=6,
                 verticalalignment='bottom', style='italic', wrap=True)
         
-        pdf.savefig(fig, dpi=self.dpi, bbox_inches='tight')
+        # Save without bbox_inches to respect figure size
+        pdf.savefig(fig, dpi=self.dpi)
         plt.close(fig)
     
     def _create_ddf_curves_page(self, pdf: PdfPages, df: pd.DataFrame, metadata: Dict):
         """Create the second page with DDF curves"""
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(self.page_width, self.page_height), 
-                                       gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.3})
+                                       gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.4})
+        
+        # Adjust layout to fit within page bounds
+        plt.subplots_adjust(left=0.08, right=0.75, top=0.92, bottom=0.12)
         
         # Get return periods and durations
         return_periods = [col.replace('_year', '') for col in df.columns if '_year' in col]
@@ -143,29 +151,30 @@ class NOAAPrecipitationReport:
         ax1.set_title('PDS-based depth-duration-frequency (DDF) curves\n' + 
                      f"Latitude: {metadata['centroid_coordinates']['latitude']:.4f}°, " +
                      f"Longitude: {metadata['centroid_coordinates']['longitude']:.4f}°", 
-                     fontsize=12, pad=20)
+                     fontsize=10, pad=15)
         
         for rp in return_periods:
             col_name = f"{rp}_year"
             if col_name in df.columns:
                 values = df[col_name].values
                 color = self.return_period_colors.get(rp, '#333333')
-                ax1.plot(duration_hours, values, 'o-', color=color, linewidth=2, 
-                        markersize=4, label=f'{rp}')
+                ax1.plot(duration_hours, values, 'o-', color=color, linewidth=1.5, 
+                        markersize=3, label=f'{rp}')
         
-        ax1.set_xlabel('Duration', fontsize=10)
-        ax1.set_ylabel('Precipitation depth (in)', fontsize=10)
+        ax1.set_xlabel('Duration', fontsize=9)
+        ax1.set_ylabel('Precipitation depth (in)', fontsize=9)
         ax1.set_xscale('log')
         ax1.grid(True, alpha=0.3)
-        ax1.legend(title='Average recurrence\ninterval\n(years)', bbox_to_anchor=(1.05, 1), 
-                  loc='upper left', fontsize=8)
+        ax1.legend(title='Average recurrence\ninterval (years)', bbox_to_anchor=(1.02, 1), 
+                  loc='upper left', fontsize=7, title_fontsize=7)
         
         # Set x-axis labels
         ax1.set_xticks(duration_hours)
-        ax1.set_xticklabels(durations, rotation=45, ha='right', fontsize=8)
+        ax1.set_xticklabels(durations, rotation=45, ha='right', fontsize=7)
+        ax1.tick_params(axis='y', labelsize=7)
         
         # Plot 2: Precipitation depth vs Return period for different durations
-        ax2.set_title('Precipitation depth vs Average recurrence interval', fontsize=12, pad=20)
+        ax2.set_title('Precipitation depth vs Average recurrence interval', fontsize=10, pad=15)
         
         for i, duration in enumerate(durations):
             values = []
@@ -176,23 +185,23 @@ class NOAAPrecipitationReport:
             
             if values:
                 color = self.duration_colors[i % len(self.duration_colors)]
-                ax2.plot(return_periods, values, 'o-', color=color, linewidth=1.5, 
-                        markersize=3, label=duration)
+                ax2.plot(return_periods, values, 'o-', color=color, linewidth=1.2, 
+                        markersize=2.5, label=duration)
         
-        ax2.set_xlabel('Average recurrence interval (years)', fontsize=10)
-        ax2.set_ylabel('Precipitation depth (in)', fontsize=10)
+        ax2.set_xlabel('Average recurrence interval (years)', fontsize=9)
+        ax2.set_ylabel('Precipitation depth (in)', fontsize=9)
         ax2.set_xscale('log')
         ax2.grid(True, alpha=0.3)
-        ax2.legend(title='Durations', bbox_to_anchor=(1.05, 1), loc='upper left', 
-                  fontsize=7, ncol=2)
+        ax2.legend(title='Durations', bbox_to_anchor=(1.02, 1), loc='upper left', 
+                  fontsize=6, title_fontsize=7, ncol=2)
+        ax2.tick_params(axis='both', labelsize=7)
         
-        # Footer with generation info
-        footer_text = f"NOAA Atlas 14, Volume 1 - Version 5        Created (GMT): {datetime.now().strftime('%a %b %d %H:%M:%S %Y')}"
-        fig.text(0.05, 0.02, footer_text, fontsize=8, style='italic')
-        fig.text(0.95, 0.02, "Maps & aerials", fontsize=8, style='italic', ha='right')
-        fig.text(0.5, 0.02, "Small scale terrain", fontsize=8, style='italic', ha='center')
+        # Footer with generation info - split into separate lines to avoid overlap
+        fig.text(0.05, 0.06, "NOAA Atlas 14, Volume 1 - Version 5", fontsize=7, style='italic')
+        fig.text(0.05, 0.03, f"Created (GMT): {datetime.now().strftime('%a %b %d %H:%M:%S %Y')}", fontsize=7, style='italic')
         
-        pdf.savefig(fig, dpi=self.dpi, bbox_inches='tight')
+        # Save without bbox_inches to respect figure size
+        pdf.savefig(fig, dpi=self.dpi)
         plt.close(fig)
     
     def _format_metadata_text(self, metadata: Dict) -> str:
