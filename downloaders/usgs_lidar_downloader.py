@@ -285,27 +285,15 @@ class USGSLidarDownloader(BaseDownloader):
                     dxf_path = os.path.join(dxf_folder, dxf_name)
                     
                     try:
-                        # Convert shapefile to DXF using ogr2ogr (more reliable for DXF)
-                        import subprocess
+                        # Convert shapefile to DXF using Python libraries
+                        success = self._convert_shapefile_to_dxf(contour_path, dxf_path)
                         
-                        # Use ogr2ogr command to convert shapefile to DXF
-                        cmd = [
-                            'ogr2ogr',
-                            '-f', 'DXF',
-                            dxf_path,
-                            contour_path
-                        ]
-                        
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                        
-                        if result.returncode == 0:
+                        if success:
                             metadata["contour_dxf_path"] = dxf_path
                             logger.info(f"Created contour DXF: {dxf_path}")
                         else:
-                            logger.warning(f"ogr2ogr failed: {result.stderr}")
+                            logger.warning("Failed to create DXF file during conversion")
                             
-                    except subprocess.TimeoutExpired:
-                        logger.warning("DXF conversion timed out")
                     except Exception as e:
                         logger.warning(f"Failed to create DXF file: {e}")
 
@@ -451,3 +439,71 @@ class USGSLidarDownloader(BaseDownloader):
                 
         except Exception as e:
             logger.warning(f"Error during file cleanup: {e}")
+    
+    def _convert_shapefile_to_dxf(self, shapefile_path: str, dxf_path: str) -> bool:
+        """
+        Convert shapefile contours to DXF format using Python libraries
+        
+        Args:
+            shapefile_path: Path to input shapefile
+            dxf_path: Path for output DXF file
+            
+        Returns:
+            True if conversion successful, False otherwise
+        """
+        try:
+            import ezdxf
+            import geopandas as gpd
+            from shapely.geometry import LineString, Point
+            
+            # Read shapefile
+            gdf = gpd.read_file(shapefile_path)
+            
+            # Create new DXF document
+            doc = ezdxf.new('R2010')  # Use AutoCAD 2010 format for compatibility
+            msp = doc.modelspace()
+            
+            # Create contour layer
+            doc.layers.new(name='CONTOURS', dxfattribs={'color': 3})  # Green color
+            
+            # Process each contour line
+            for idx, row in gdf.iterrows():
+                geom = row.geometry
+                elevation = row.get('ELEV', row.get('elevation', row.get('value', 0)))
+                
+                if geom.geom_type == 'LineString':
+                    # Convert linestring coordinates to DXF format
+                    points = [(x, y, float(elevation)) for x, y in geom.coords]
+                    
+                    # Create 3D polyline
+                    msp.add_polyline3d(
+                        points=points,
+                        dxfattribs={
+                            'layer': 'CONTOURS',
+                            'color': 3
+                        }
+                    )
+                
+                elif geom.geom_type == 'MultiLineString':
+                    # Handle multi-linestrings
+                    for line in geom.geoms:
+                        points = [(x, y, float(elevation)) for x, y in line.coords]
+                        msp.add_polyline3d(
+                            points=points,
+                            dxfattribs={
+                                'layer': 'CONTOURS', 
+                                'color': 3
+                            }
+                        )
+            
+            # Save DXF file
+            doc.saveas(dxf_path)
+            logger.info(f"Successfully converted {len(gdf)} contour features to DXF")
+            return True
+            
+        except ImportError:
+            logger.warning("ezdxf library not available for DXF conversion")
+            return False
+        except Exception as e:
+            logger.error(f"Error converting shapefile to DXF: {e}")
+            return False

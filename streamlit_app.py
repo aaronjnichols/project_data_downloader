@@ -21,6 +21,7 @@ import tempfile
 import zipfile
 import time
 import math
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import folium
@@ -141,9 +142,8 @@ def create_header():
         )
     
     with col2:
-        # Quick access settings
-        if st.button("⚙️ Settings", help="User preferences and settings"):
-            st.session_state.show_settings = not st.session_state.get('show_settings', False)
+        # Reserved for future use
+        st.empty()
 
 def validate_shapefile_upload(uploaded_files):
     """Validate uploaded shapefile components"""
@@ -366,27 +366,30 @@ def display_simple_data_selection(sources):
             
             # USGS-specific contour generation options
             if source_id == 'usgs_lidar':
-                st.write("  ⛰️ **Elevation Options:**")
-                
-                generate_contours = st.checkbox(
-                    "  Generate Contour Lines (Shapefile + DXF)",
-                    value=False,
-                    help="Generate contour line shapefiles and DXF files from the DEM data for CAD use",
-                    key=f"contours_{source_id}"
-                )
-                
-                if generate_contours:
-                    contour_interval = st.number_input(
-                        "  Contour Interval (feet)",
-                        min_value=1,
-                        max_value=100,
-                        value=5,
-                        step=1,
-                        help="Vertical interval between contour lines in feet",
-                        key=f"interval_{source_id}"
-                    )
-                    all_config_options['contour_interval'] = contour_interval
-                    st.write(f"    📏 Contours every {contour_interval} feet")
+                with st.container():
+                    col_spacer, col_content = st.columns([0.1, 0.9])
+                    with col_content:
+                        st.markdown("⛰️ **Elevation Options:**")
+                        
+                        generate_contours = st.checkbox(
+                            "Generate Contour Lines (Shapefile + DXF)",
+                            value=False,
+                            help="Generate contour line shapefiles and DXF files from the DEM data for CAD use",
+                            key=f"contours_{source_id}"
+                        )
+                    
+                        if generate_contours:
+                            contour_interval = st.number_input(
+                                "Contour Interval (feet)",
+                                min_value=1,
+                                max_value=100,
+                                value=5,
+                                step=1,
+                                help="Vertical interval between contour lines in feet",
+                                key=f"interval_{source_id}"
+                            )
+                            all_config_options['contour_interval'] = contour_interval
+                            st.write(f"📏 Contours every {contour_interval} feet")
     
     if not selected_sources:
         return None, None, {}
@@ -845,6 +848,85 @@ def display_data_preview(job_id):
     except Exception as e:
         st.error(f"Error loading preview: {str(e)}")
 
+
+def has_aoi() -> bool:
+    """Check if user has defined an AOI (either drawn or uploaded)"""
+    return (
+        (st.session_state.get('aoi_geometry') is not None) or 
+        (st.session_state.get('aoi_bounds') is not None) or 
+        (st.session_state.get('uploaded_aoi') is not None)
+    )
+
+
+def get_aoi_geometry_and_bounds() -> tuple:
+    """Get current AOI geometry and bounds from session state"""
+    
+    # Check for uploaded AOI first (prioritize uploaded over potentially mixed state)
+    if st.session_state.get('uploaded_aoi'):
+        aoi_data = st.session_state.uploaded_aoi
+        if 'geojson' in aoi_data and 'bounds' in aoi_data:
+            geometry = aoi_data['geojson']['features'][0]['geometry']
+            bounds = aoi_data['bounds']
+            return geometry, bounds
+    
+    # Check for drawn AOI (geometry should be just the geometry object)
+    if st.session_state.get('aoi_geometry') and st.session_state.get('aoi_bounds'):
+        aoi_geometry = st.session_state.aoi_geometry
+        
+        # Handle case where aoi_geometry might be a GeoJSON FeatureCollection (from shapefile)
+        if isinstance(aoi_geometry, dict):
+            if aoi_geometry.get('type') == 'FeatureCollection':
+                # Extract geometry from feature collection
+                if 'features' in aoi_geometry and len(aoi_geometry['features']) > 0:
+                    geometry = aoi_geometry['features'][0]['geometry']
+                else:
+                    return None, None
+            elif aoi_geometry.get('type') in ['Polygon', 'MultiPolygon', 'Point', 'LineString', 'MultiPoint', 'MultiLineString']:
+                # Already a geometry object
+                geometry = aoi_geometry
+            else:
+                return None, None
+        else:
+            return None, None
+            
+        return geometry, st.session_state.aoi_bounds
+    
+    return None, None
+
+
+def generate_location_map_exhibit_ui():
+    """Handle the UI for location map exhibit generation"""
+    geometry, bounds = get_aoi_geometry_and_bounds()
+    
+    if not geometry or not bounds:
+        st.error("❌ No valid AOI found. Please draw an AOI or upload a shapefile first.")
+        return
+    
+    with st.spinner("🗺️ Generating location map exhibit..."):
+        from unified_map import generate_location_map_exhibit
+        
+        # Generate the location map exhibit
+        location_map_path = generate_location_map_exhibit(geometry, bounds)
+        
+        if location_map_path:
+            # Store in session state
+            st.session_state.location_map_exhibit = location_map_path
+            st.success("📍 **Location map exhibit generated successfully!**")
+            
+            # Provide immediate download button
+            with open(location_map_path, 'rb') as pdf_file:
+                st.download_button(
+                    label="📥 Download Location Map Exhibit (PDF)",
+                    data=pdf_file.read(),
+                    file_name=f"location_map_exhibit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    help="Professional location map showing your Area of Interest",
+                    use_container_width=True
+                )
+        else:
+            st.error("❌ **Failed to generate location map exhibit.** Please check your AOI and try again.")
+
+
 def main():
     """Main application function"""
     # Initialize session state
@@ -956,11 +1038,53 @@ def main():
             st.write(f"**Type:** Bounding Box")
             st.write(f"**Bounds:** {bounds['minx']:.4f}, {bounds['miny']:.4f} to {bounds['maxx']:.4f}, {bounds['maxy']:.4f}")
     
-    # Show settings panel if requested  
-    if st.session_state.get('show_settings', False):
-        st.info("Settings panel temporarily disabled - smart recommendations feature removed.")
-        st.session_state.show_settings = False
     
+    # Optional Project Information Section
+    with st.expander("📋 Project Information (Optional)", expanded=False):
+        st.markdown("**Customize your location map exhibit with project details:**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            project_name = st.text_input(
+                "Project Name",
+                value=st.session_state.get('project_name', ''),
+                placeholder="Geospatial Data Analysis",
+                help="Name of your project or study area"
+            )
+            
+            client_name = st.text_input(
+                "Client/Organization",
+                value=st.session_state.get('client_name', ''),
+                placeholder="Data User",
+                help="Organization or client name"
+            )
+        
+        with col2:
+            project_number = st.text_input(
+                "Project Number",
+                value=st.session_state.get('project_number', ''),
+                placeholder=f"GDA-{datetime.now().strftime('%Y%m%d')}",
+                help="Project number or identifier"
+            )
+            
+            drawn_by = st.text_input(
+                "Drawn By",
+                value=st.session_state.get('drawn_by', ''),
+                placeholder="Auto-Generated",
+                help="Your initials or name (optional)",
+                max_chars=20
+            )
+        
+        # Store in session state
+        st.session_state.project_name = project_name
+        st.session_state.client_name = client_name
+        st.session_state.project_number = project_number
+        st.session_state.drawn_by = drawn_by
+        
+        if any([project_name, client_name, project_number, drawn_by]):
+            st.success("✅ Project information saved - will be included in location map exhibits")
+
     # Main content area with unified map
     st.subheader("🗺️ Interactive Map Interface")
     
@@ -975,6 +1099,17 @@ def main():
         if 'uploaded_aoi' in st.session_state:
             del st.session_state.uploaded_aoi
         # Don't rerun immediately - let user see the results first
+    
+    # Location Map Exhibit Generation Button (only show if AOI exists)
+    if has_aoi():
+        st.markdown("---")  # Visual separator
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("📍 Generate Location Map Exhibit", 
+                        help="Create a professional location map PDF showing your Area of Interest",
+                        type="secondary",
+                        use_container_width=True):
+                generate_location_map_exhibit_ui()
     
     # Sidebar with enhanced quick actions
     with st.sidebar:
@@ -1104,24 +1239,8 @@ def main():
 
 # Add footer with tips
 def display_footer():
-    """Display footer with helpful information"""
-    st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("**🎯 Tips:**")
-        st.markdown("• Use Ctrl+R to refresh data")
-        st.markdown("• ESC clears all selections")
-    
-    with col2:
-        st.markdown("**📊 Support:**")
-        st.markdown("• Check the tutorial above")
-        st.markdown("• Use enhanced data selection")
-    
-    with col3:
-        st.markdown("**⚙️ Customize:**")
-        st.markdown("• Enhanced data selection interface")
-        st.markdown("• Direct downloads with progress tracking")
+    """Display clean footer"""
+    pass
 
 def monitor_multiple_jobs(jobs_list):
     """Monitor multiple jobs simultaneously"""

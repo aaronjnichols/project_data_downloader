@@ -16,8 +16,77 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from folium.plugins import Draw, MeasureControl, MousePosition
 import logging
+from datetime import datetime
+import os
+from utils.location_map_exhibit import LocationMapGenerator
 
 logger = logging.getLogger(__name__)
+
+
+def generate_location_map_exhibit(geometry: Dict, bounds: Dict) -> Optional[str]:
+    """
+    Generate a location map exhibit for the given AOI geometry
+    
+    Args:
+        geometry: GeoJSON geometry dict
+        bounds: Bounds dictionary with minx, miny, maxx, maxy
+        
+    Returns:
+        Path to generated location map PDF, or None if failed
+    """
+    try:
+        # Create temporary GeoDataFrame from geometry
+        from shapely.geometry import shape
+        
+        # Convert geometry dict to shapely geometry
+        shapely_geom = shape(geometry)
+        
+        # Create GeoDataFrame
+        aoi_gdf = gpd.GeoDataFrame([1], geometry=[shapely_geom], crs='EPSG:4326')
+        
+        # Get project info from session state with smart defaults
+        import streamlit as st
+        
+        # Smart defaults
+        default_project_name = "Geospatial Data Analysis"
+        default_project_number = f"GDA-{datetime.now().strftime('%Y%m%d')}"
+        default_client = "Data User"
+        default_drawn_by = "Auto-Generated"
+        
+        # Use user input or defaults
+        project_info = {
+            'name': st.session_state.get('project_name') or default_project_name,
+            'number': st.session_state.get('project_number') or default_project_number,
+            'client': st.session_state.get('client_name') or default_client,
+            'date': datetime.now().strftime('%m/%d/%Y'),
+            'drawn_by': st.session_state.get('drawn_by') or default_drawn_by
+        }
+        
+        # Create output path in a temp directory or session-specific location
+        output_dir = tempfile.gettempdir()
+        output_filename = f"location_map_exhibit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        output_path = os.path.join(output_dir, output_filename)
+        
+        # Generate location map
+        map_generator = LocationMapGenerator()
+        success = map_generator.generate_location_map(
+            site_boundary=aoi_gdf,
+            project_info=project_info,
+            output_path=output_path,
+            base_map_type="satellite",
+            include_vicinity=True
+        )
+        
+        if success and os.path.exists(output_path):
+            logger.info(f"Location map exhibit generated: {output_path}")
+            return output_path
+        else:
+            logger.warning("Location map exhibit generation failed")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error generating location map exhibit: {e}")
+        return None
 
 
 class UnifiedMapInterface:

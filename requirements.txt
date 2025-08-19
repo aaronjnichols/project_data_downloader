@@ -23,6 +23,10 @@ python-dateutil>=2.8.0
 # PDF generation and plotting
 matplotlib>=3.6.0
 pandas>=1.5.0
+contextily>=1.6.0
+
+# CAD export functionality
+ezdxf>=1.0.0
 
 # FastAPI and API dependencies
 fastapi>=0.104.0
