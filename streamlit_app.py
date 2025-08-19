@@ -1341,13 +1341,47 @@ def monitor_multiple_jobs(jobs_list):
     elif attempt >= max_attempts:
         st.warning("Some jobs are still running. Please check back later.")
 
+def get_source_info(source_id):
+    """Get formatted information for each data source"""
+    source_map = {
+        'fema': {
+            'name': 'FEMA Flood Risk Data',
+            'icon': '🌊',
+            'color': '#1f77b4',
+            'description': 'National Flood Hazard Layer (NFHL)',
+            'typical_layers': ['Flood Zones', 'Base Flood Elevations', 'Flood Insurance Rate Maps']
+        },
+        'usgs_lidar': {
+            'name': 'USGS Elevation Data', 
+            'icon': '⛰️',
+            'color': '#2ca02c',
+            'description': '3D Elevation Program (3DEP)',
+            'typical_layers': ['Digital Elevation Models', 'Contour Lines', 'LiDAR Point Clouds']
+        },
+        'noaa_atlas14': {
+            'name': 'NOAA Precipitation Data',
+            'icon': '🌧️', 
+            'color': '#ff7f0e',
+            'description': 'Precipitation-Frequency Atlas',
+            'typical_layers': ['Precipitation Maps', 'Frequency Analysis', 'Statistical Reports']
+        }
+    }
+    
+    return source_map.get(source_id, {
+        'name': f'{source_id.upper()} Data',
+        'icon': '📦',
+        'color': '#666666', 
+        'description': 'Geospatial Dataset',
+        'typical_layers': ['Data Layers']
+    })
+
+
 def display_persistent_downloads():
-    """Display all available persistent downloads"""
+    """Display all available persistent downloads with enhanced UI"""
     if not st.session_state.persistent_downloads:
         return
     
     st.subheader("📥 Available Downloads")
-    st.write("Your completed downloads are ready and will remain available during this session:")
     
     # Sort downloads by creation time (newest first)
     downloads = sorted(
@@ -1356,37 +1390,81 @@ def display_persistent_downloads():
         reverse=True
     )
     
+    # Display count
+    st.write(f"**{len(downloads)}** completed download{'s' if len(downloads) != 1 else ''} ready:")
+    st.write("")  # Add some spacing
+    
     for job_id, download_info in downloads:
+        # Get source information
+        source_id = download_info.get('source_id', 'unknown')
+        source_info = get_source_info(source_id)
+        
+        # Create timestamp
+        created_time = datetime.fromtimestamp(download_info['created_at'])
+        time_str = created_time.strftime("%B %d, %Y at %I:%M %p")
+        
+        # Custom card styling
         with st.container():
-            # Create a card-like display for each download
-            st.markdown(f"""
-            <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin: 10px 0; background-color: #f9f9f9;">
-                <h4 style="margin: 0 0 10px 0;">📦 {download_info.get('job_name', f'Job_{job_id}')}</h4>
-            </div>
-            """, unsafe_allow_html=True)
+            # Header section with source info
+            col_icon, col_title = st.columns([0.5, 9.5])
             
-            col1, col2, col3 = st.columns([2, 1, 1])
+            with col_icon:
+                st.markdown(f"<div style='font-size: 2.5rem; text-align: center;'>{source_info['icon']}</div>", 
+                           unsafe_allow_html=True)
+            
+            with col_title:
+                st.markdown(f"""
+                <div style='padding: 0;'>
+                    <h4 style='margin: 0; color: {source_info['color']}; font-size: 1.2rem;'>{source_info['name']}</h4>
+                    <p style='margin: 2px 0; color: #666; font-size: 0.9rem;'>{source_info['description']}</p>
+                    <p style='margin: 2px 0; color: #888; font-size: 0.8rem;'>Downloaded on {time_str}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Add visual separation
+            st.markdown("<div style='margin: 15px 0; border-top: 1px solid #e0e0e0;'></div>", 
+                       unsafe_allow_html=True)
+            
+            # Action buttons section  
+            col1, col2, col3, col4 = st.columns([2.5, 1.2, 1.2, 1.1])
             
             with col1:
-                # Main download link
+                # Main download button (styled as primary action)
                 st.markdown(f"""
-                **[📥 Download ZIP File]({download_info['zip_url']})**
-                
-                *Job ID: {job_id}*
-                """)
+                <a href="{download_info['zip_url']}" 
+                   style="display: inline-block; padding: 8px 16px; background: linear-gradient(90deg, {source_info['color']}, {source_info['color']}aa); 
+                          color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;">
+                    📥 Download ZIP
+                </a>
+                """, unsafe_allow_html=True)
             
             with col2:
                 # Copy URL button
-                if st.button("📋 Copy URL", key=f"copy_persistent_{job_id}"):
-                    st.code(download_info['zip_url'])
+                if st.button("📋 Copy URL", key=f"copy_persistent_{job_id}", 
+                           help="Copy download URL to clipboard"):
+                    st.code(download_info['zip_url'], language="")
             
             with col3:
-                # Delete button
-                if st.button("🗑️ Remove", key=f"delete_persistent_{job_id}", help="Remove from list (files remain available)"):
+                # Info button (show technical details)
+                if st.button("ℹ️ Details", key=f"info_persistent_{job_id}",
+                           help="Show technical information"):
+                    with st.expander("📋 Technical Details", expanded=True):
+                        st.write(f"**Job ID:** `{job_id}`")
+                        st.write(f"**Data Source:** {source_info['name']}")
+                        st.write(f"**Download URL:** {download_info['zip_url']}")
+                        if 'summary_url' in download_info and download_info['summary_url']:
+                            st.write(f"**Summary Report:** {download_info['summary_url']}")
+                        st.write(f"**Created:** {time_str}")
+            
+            with col4:
+                # Remove button
+                if st.button("🗑️ Remove", key=f"delete_persistent_{job_id}", 
+                           help="Remove from list (files remain available on server)"):
                     del st.session_state.persistent_downloads[job_id]
                     st.rerun()
             
-            st.markdown("---")
+            # Bottom spacing
+            st.markdown("<div style='margin: 25px 0;'></div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
