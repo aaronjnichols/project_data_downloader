@@ -148,14 +148,14 @@ class NOAAAtlas14Downloader(BaseDownloader):
                 # Create output directory
                 os.makedirs(output_path, exist_ok=True)
                 
-                # Generate output filename with timestamp
+                # Generate simplified filenames for depth-duration-frequency data only
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file = os.path.join(
-                    output_path, 
-                    f"noaa_atlas14_{layer_id}_{centroid_lat:.4f}_{centroid_lon:.4f}_{timestamp}.csv"
-                )
                 
-                # Save raw CSV response
+                # Only create depth-duration-frequency CSV file
+                csv_filename = f"depth_duration_frequency_{centroid_lat:.4f}_{centroid_lon:.4f}_{timestamp}.csv"
+                output_file = os.path.join(output_path, csv_filename)
+                
+                # Save processed CSV response
                 with open(output_file, 'w', encoding='utf-8') as f:
                     f.write(response.text)
                 
@@ -165,50 +165,49 @@ class NOAAAtlas14Downloader(BaseDownloader):
                     parsed_data = self._parse_noaa_csv(output_file)
                     feature_count = len(parsed_data.get('durations', []))
                     
-                    # Create metadata file
+                    # Create minimal metadata (embedded in PDF, not separate file)
                     metadata = {
                         'download_timestamp': timestamp,
                         'centroid_coordinates': {
                             'latitude': centroid_lat,
                             'longitude': centroid_lon
                         },
-                        'request_parameters': params,
-                        'aoi_bounds': {
-                            'minx': minx, 'miny': miny, 
-                            'maxx': maxx, 'maxy': maxy
-                        },
                         'data_summary': {
                             'durations': feature_count,
                             'return_periods': len(parsed_data.get('return_periods', [])),
                             'data_type': parsed_data.get('data_type', 'Unknown'),
                             'units': parsed_data.get('units', 'Unknown')
-                        },
-                        'layer_info': {
-                            'id': layer_id,
-                            'name': self.AVAILABLE_LAYERS[layer_id].name,
-                            'description': self.AVAILABLE_LAYERS[layer_id].description
-                        },
-                        'noaa_metadata': parsed_data.get('metadata', {})
+                        }
                     }
                     
-                    metadata_file = output_file.replace('.csv', '_metadata.json')
-                    with open(metadata_file, 'w', encoding='utf-8') as f:
-                        json.dump(metadata, f, indent=2)
-                    
-                    # Generate PDF report if processed file exists
+                    # Generate PDF report - only essential output file
                     processed_file = parsed_data.get('processed_file')
                     if processed_file and os.path.exists(processed_file):
                         try:
-                            pdf_file = output_file.replace('.csv', '_report.pdf')
-                            if generate_precipitation_pdf(processed_file, metadata_file, pdf_file):
+                            pdf_filename = f"depth_duration_frequency_{centroid_lat:.4f}_{centroid_lon:.4f}_{timestamp}.pdf"
+                            pdf_file = os.path.join(output_path, pdf_filename)
+                            
+                            # Create minimal metadata file for PDF generation only
+                            temp_metadata_file = output_file.replace('.csv', '_temp_metadata.json')
+                            with open(temp_metadata_file, 'w', encoding='utf-8') as f:
+                                json.dump(metadata, f, indent=2)
+                            
+                            if generate_precipitation_pdf(processed_file, temp_metadata_file, pdf_file):
                                 metadata['pdf_report'] = pdf_file
-                                logger.info(f"Generated precipitation frequency PDF report: {os.path.basename(pdf_file)}")
+                                logger.info(f"Generated depth-duration-frequency PDF report: {os.path.basename(pdf_file)}")
                             else:
                                 logger.warning("Failed to generate PDF report")
+                                
+                            # Clean up temporary metadata file
+                            try:
+                                os.remove(temp_metadata_file)
+                            except:
+                                pass
+                                
                         except Exception as pdf_error:
                             logger.warning(f"PDF generation failed: {pdf_error}")
                     
-                    logger.info(f"Successfully downloaded NOAA Atlas 14 data to {output_file}")
+                    logger.info(f"Successfully downloaded NOAA depth-duration-frequency data to {output_file}")
                     logger.info(f"Data contains {feature_count} precipitation frequency estimates")
                     
                     return DownloadResult(

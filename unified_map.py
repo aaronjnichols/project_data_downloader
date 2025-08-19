@@ -27,13 +27,14 @@ class UnifiedMapInterface:
         self.default_center = [39.8283, -98.5795]  # Geographic center of USA
         self.default_zoom = 4
         
-    def create_unified_map(self, aoi_data=None, mode="view") -> folium.Map:
+    def create_unified_map(self, aoi_data=None, mode="view", allow_drawing=True) -> folium.Map:
         """
         Create unified map with both viewing and drawing capabilities
         
         Args:
             aoi_data: Existing AOI data to display
             mode: "view" or "draw" mode
+            allow_drawing: Whether to enable drawing tools (enforces single AOI policy)
             
         Returns:
             folium.Map: Unified map with appropriate tools
@@ -48,7 +49,7 @@ class UnifiedMapInterface:
             center_lat, center_lon = self.default_center
             zoom = self.default_zoom
         
-        # Create base map
+        # Create base map with OpenStreetMap as default
         m = folium.Map(
             location=[center_lat, center_lon],
             zoom_start=zoom,
@@ -58,8 +59,8 @@ class UnifiedMapInterface:
         # Add multiple tile layers
         self._add_tile_layers(m)
         
-        # Add drawing tools if in draw mode
-        if mode == "draw":
+        # Add drawing tools only if in draw mode AND drawing is allowed (no existing AOI)
+        if mode == "draw" and allow_drawing:
             self._add_drawing_tools(m)
         
         # Add measurement and position tools
@@ -94,32 +95,24 @@ class UnifiedMapInterface:
             control=True
         ).add_to(m)
         
-        # Terrain
-        folium.TileLayer(
-            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
-            attr='Esri',
-            name='Terrain',
-            overlay=False,
-            control=True
-        ).add_to(m)
     
     def _add_drawing_tools(self, m: folium.Map):
-        """Add interactive drawing tools"""
+        """Add interactive drawing tools - only when no AOI exists"""
         draw = Draw(
             export=True,
             position='topleft',
             draw_options={
                 'polyline': False,  # Disable line drawing
                 'polygon': True,
-                'circle': True,
+                'circle': True, 
                 'rectangle': True,
                 'marker': False,  # Disable markers
                 'circlemarker': False,
             },
             edit_options={
-                'poly': True,
-                'remove': True,
-                'edit': True
+                'poly': False,  # Disable editing existing shapes
+                'remove': False,  # Disable removing shapes 
+                'edit': False   # Disable all editing
             }
         )
         draw.add_to(m)
@@ -212,8 +205,13 @@ class UnifiedMapInterface:
             if not drawings:
                 return None, None, None
             
-            # Get the last drawn feature
-            last_drawing = drawings[-1]
+            # Get the most recent drawing (user may have drawn multiple shapes)
+            # Filter out any deleted drawings and take the last valid one
+            valid_drawings = [d for d in drawings if d.get('geometry') is not None]
+            if not valid_drawings:
+                return None, None, None
+                
+            last_drawing = valid_drawings[-1]
             
             if 'geometry' not in last_drawing:
                 return None, None, "Invalid drawing data"
@@ -330,30 +328,61 @@ def display_unified_map_interface() -> Tuple[Optional[Dict], Optional[Dict]]:
     # Mode selection
     col1, col2, col3 = st.columns([1, 1, 2])
     
-    with col1:
-        map_mode = st.radio(
-            "Map Mode",
-            ["View", "Draw"],
-            help="Switch between viewing existing AOI and drawing new AOI",
-            horizontal=True
-        )
+    # Check if clear button was clicked
+    clear_clicked = False
+    
+    # Initialize map mode in session state if not exists
+    if 'map_mode' not in st.session_state:
+        st.session_state.map_mode = "View"
     
     with col2:
-        if st.button("🔄 Reset Map"):
-            # Clear any existing AOI
-            if 'aoi_geometry' in st.session_state:
-                del st.session_state.aoi_geometry
-            if 'aoi_bounds' in st.session_state:
-                del st.session_state.aoi_bounds
-            if 'uploaded_aoi' in st.session_state:
-                del st.session_state.uploaded_aoi
+        if st.button("🗑️ Clear AOI"):
+            # Clear all AOI data
+            aoi_keys = ['aoi_geometry', 'aoi_bounds', 'uploaded_aoi', 'aoi_drawn']
+            for key in aoi_keys:
+                if key in st.session_state:
+                    del st.session_state[key]
+            
+            # CRITICAL: Increment map refresh counter to force new map component
+            if 'map_refresh_counter' not in st.session_state:
+                st.session_state.map_refresh_counter = 0
+            st.session_state.map_refresh_counter += 1
+            
+            # Reset radio button to View mode
+            st.session_state.map_mode = "View"
+            
+            st.success("✅ AOI cleared! Switch to Draw mode to create a new AOI.")
             st.rerun()
+    
+    with col1:
+        # Radio button controlled by session state
+        map_mode = st.radio(
+            "Map Mode", 
+            ["View", "Draw"],
+            index=0 if st.session_state.map_mode == "View" else 1,
+            help="Switch between viewing existing AOI and drawing new AOI",
+            horizontal=True,
+            key="map_mode_radio"
+        )
+        
+        # Update session state when radio changes
+        st.session_state.map_mode = map_mode
     
     with col3:
         if map_mode == "Draw":
-            st.info("🖊️ Use the drawing tools on the map to define your AOI")
+            # Check if AOI already exists (must have actual values, not just None)
+            has_existing_aoi = (
+                (st.session_state.get('aoi_geometry') is not None) or 
+                (st.session_state.get('aoi_bounds') is not None) or 
+                (st.session_state.get('uploaded_aoi') is not None)
+            )
+            
+            if has_existing_aoi:
+                st.warning("⚠️ **AOI Already Exists**: Drawing tools are disabled. Click '🗑️ Clear AOI' to draw a new area.")
+            else:
+                st.info("🖊️ **Draw AOI**: Use the drawing tools on the map to define your area of interest")
         else:
-            st.info("👀 Viewing mode - upload shapefile or enter coordinates in sidebar")
+            st.info("👀 **View Mode**: Upload shapefile or enter coordinates in sidebar")
     
     # Get current AOI data
     current_aoi = None
@@ -364,18 +393,41 @@ def display_unified_map_interface() -> Tuple[Optional[Dict], Optional[Dict]]:
     
     # Create and display map
     mode = "draw" if map_mode == "Draw" else "view"
-    unified_map = map_interface.create_unified_map(aoi_data=current_aoi, mode=mode)
+    
+    # Determine if drawing should be allowed (single AOI policy)
+    has_existing_aoi = (
+        (st.session_state.get('aoi_geometry') is not None) or 
+        (st.session_state.get('aoi_bounds') is not None) or 
+        (st.session_state.get('uploaded_aoi') is not None) or
+        (st.session_state.get('aoi_drawn', False) is True)  # Explicit drawing flag
+    )
+    allow_drawing = not has_existing_aoi
+    
+    unified_map = map_interface.create_unified_map(
+        aoi_data=current_aoi, 
+        mode=mode, 
+        allow_drawing=allow_drawing
+    )
+    
+    # Initialize map refresh counter if not exists
+    if 'map_refresh_counter' not in st.session_state:
+        st.session_state.map_refresh_counter = 0
     
     # Display map with appropriate height
+    # Only return drawing data if drawing is allowed
+    returned_objects = ["all_drawings", "last_clicked"] if (mode == "draw" and allow_drawing) else ["last_clicked"]
+    
+    # CRITICAL: Use refresh counter as key to force fresh map component when cleared
     map_data = st_folium(
         unified_map,
         width=None,  # Use full width
         height=600,  # Larger height for better usability
-        returned_objects=["all_drawings", "last_clicked"] if mode == "draw" else ["last_clicked"]
+        returned_objects=returned_objects,
+        key=f"unified_map_{st.session_state.map_refresh_counter}_{mode}_{allow_drawing}"
     )
     
-    # Process drawing interactions if in draw mode
-    if mode == "draw" and map_data:
+    # Process drawing interactions only if in draw mode AND drawing is allowed
+    if mode == "draw" and allow_drawing and map_data:
         geometry, bounds, error = map_interface.process_map_interactions(map_data)
         
         if error:
@@ -383,16 +435,42 @@ def display_unified_map_interface() -> Tuple[Optional[Dict], Optional[Dict]]:
             return None, None
         
         if geometry and bounds:
-            # Check if this is the same as what we already have to prevent loops
-            current_geometry = st.session_state.get('aoi_geometry')
-            if current_geometry and current_geometry == geometry:
-                # Same geometry, don't process again
-                return None, None
-            
-            # Validate AOI size
+            # Validate and display AOI information
             area_info = calculate_aoi_info(geometry)
             if area_info:
-                # Display AOI information
+                # Validate AOI size limits
+                area_km2 = area_info['area_km2']
+                area_acres = area_info['area_acres']
+                
+                # Size limits
+                MIN_AREA_ACRES = 0.1  # 0.1 acre minimum
+                MAX_AREA_KM2 = 10000  # 10,000 km² maximum
+                
+                min_area_km2 = MIN_AREA_ACRES / 247.105  # Convert acres to km²
+                
+                # Check size limits
+                if area_km2 < min_area_km2:
+                    st.error(f"❌ **AOI too small!** Minimum area: {MIN_AREA_ACRES} acres ({min_area_km2:.6f} km²). Current: {area_acres:.3f} acres.")
+                    return None, None
+                    
+                if area_km2 > MAX_AREA_KM2:
+                    st.error(f"❌ **AOI too large!** Maximum area: {MAX_AREA_KM2:,} km². Current: {area_km2:.1f} km².")
+                    return None, None
+                
+                # Show success message with area-based warnings
+                st.success("✅ **AOI Created!** Your area of interest has been defined.")
+                
+                # Add smart warnings based on area size
+                if area_km2 >= 2000:
+                    st.warning("🚨 **Very large area** - DEM downloads may take 1+ hours. Consider a smaller area for faster processing.")
+                elif area_km2 >= 500:
+                    st.warning("⚠️ **Large area** - DEM downloads may take 30-60 minutes.")
+                elif area_km2 >= 100:
+                    st.info("⏱️ **Medium area** - DEM downloads may take 10-20 minutes.")
+                else:
+                    st.info("✅ **Small to medium area** - Fast downloads expected (1-5 minutes).")
+                
+                # Display consistent AOI metrics
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Area", f"{area_info['area_km2']:.3f} km²")
@@ -403,10 +481,14 @@ def display_unified_map_interface() -> Tuple[Optional[Dict], Optional[Dict]]:
                 with col4:
                     st.metric("Center", f"{area_info['center_lat']:.4f}, {area_info['center_lon']:.4f}")
                 
-                # Success message
-                st.success(f"✅ AOI defined successfully! Area: {area_info['area_km2']:.3f} km²")
+                # Set flag to prevent further drawings
+                st.session_state.aoi_drawn = True
                 
                 return geometry, bounds
+    
+    # If in draw mode but drawing not allowed, show clear message
+    elif mode == "draw" and not allow_drawing:
+        st.warning("🚫 **Drawing Disabled**: An AOI already exists. Use the '🗑️ Clear AOI' button above to draw a new area.")
     
     return None, None
 

@@ -20,6 +20,7 @@ import json
 import tempfile
 import zipfile
 import time
+import math
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import folium
@@ -159,6 +160,23 @@ def validate_shapefile_upload(uploaded_files):
     
     return True, "Valid shapefile"
 
+def validate_aoi_size(area_km2: float, area_acres: float = None) -> tuple[bool, str]:
+    """Validate AOI size against limits"""
+    MIN_AREA_ACRES = 0.1  # 0.1 acre minimum
+    MAX_AREA_KM2 = 10000  # 10,000 km² maximum
+    
+    min_area_km2 = MIN_AREA_ACRES / 247.105  # Convert acres to km²
+    if area_acres is None:
+        area_acres = area_km2 * 247.105
+    
+    if area_km2 < min_area_km2:
+        return False, f"AOI too small! Minimum area: {MIN_AREA_ACRES} acres ({min_area_km2:.6f} km²). Current: {area_acres:.3f} acres."
+        
+    if area_km2 > MAX_AREA_KM2:
+        return False, f"AOI too large! Maximum area: {MAX_AREA_KM2:,} km². Current: {area_km2:.1f} km²."
+    
+    return True, "Valid AOI size"
+
 def process_shapefile_upload(uploaded_files):
     """Process uploaded shapefile and extract geometry"""
     try:
@@ -186,6 +204,17 @@ def process_shapefile_upload(uploaded_files):
             if gdf.crs != 'EPSG:4326':
                 gdf = gdf.to_crs('EPSG:4326')
             
+            # Calculate area properly for validation
+            gdf_proj = gdf.to_crs('EPSG:3857')  # Project for accurate area calculation
+            area_m2 = gdf_proj.geometry.area.sum()
+            area_km2 = area_m2 / 1_000_000
+            area_acres = area_km2 * 247.105
+            
+            # Validate AOI size
+            is_valid, message = validate_aoi_size(area_km2, area_acres)
+            if not is_valid:
+                return None, message
+            
             # Get bounds and geometry
             bounds = gdf.total_bounds
             aoi_bounds = {
@@ -207,7 +236,7 @@ def process_shapefile_upload(uploaded_files):
                 'geojson': geojson,
                 'union_geometry': union_geom,
                 'feature_count': len(gdf),
-                'total_area_km2': round(gdf.geometry.area.sum() * 111.32**2, 2)  # Rough conversion to km2
+                'total_area_km2': round(area_km2, 3)
             }, None
             
     except Exception as e:
@@ -340,9 +369,9 @@ def display_simple_data_selection(sources):
                 st.write("  ⛰️ **Elevation Options:**")
                 
                 generate_contours = st.checkbox(
-                    "  Generate Contour Lines",
+                    "  Generate Contour Lines (Shapefile + DXF)",
                     value=False,
-                    help="Generate contour line shapefiles from the DEM data",
+                    help="Generate contour line shapefiles and DXF files from the DEM data for CAD use",
                     key=f"contours_{source_id}"
                 )
                 
@@ -876,6 +905,18 @@ def main():
             
             if st.button("Set Bounding Box"):
                 if min_lon < max_lon and min_lat < max_lat:
+                    # Calculate area for validation
+                    width_deg = max_lon - min_lon
+                    height_deg = max_lat - min_lat
+                    # Rough area calculation (degrees to km²)
+                    area_km2 = width_deg * height_deg * 111.32 * 111.32 * abs(math.cos(math.radians((min_lat + max_lat) / 2)))
+                    
+                    # Validate area
+                    is_valid, message = validate_aoi_size(area_km2)
+                    if not is_valid:
+                        st.error(message)
+                        return
+                    
                     bounds = {
                         'minx': min_lon,
                         'miny': min_lat,
@@ -885,7 +926,19 @@ def main():
                     st.session_state.aoi_bounds = bounds
                     st.session_state.uploaded_aoi = None
                     st.session_state.aoi_geometry = None
-                    st.success("Bounding box set successfully!")
+                    
+                    # Show area-based warning
+                    area_acres = area_km2 * 247.105
+                    if area_km2 >= 2000:
+                        st.warning("🚨 **Very large area** - DEM downloads may take 1+ hours.")
+                    elif area_km2 >= 500:
+                        st.warning("⚠️ **Large area** - DEM downloads may take 30-60 minutes.")
+                    elif area_km2 >= 100:
+                        st.info("⏱️ **Medium area** - DEM downloads may take 10-20 minutes.")
+                    else:
+                        st.info("✅ **Small to medium area** - Fast downloads expected.")
+                    
+                    st.success(f"Bounding box set successfully! Area: {area_km2:.3f} km² ({area_acres:.1f} acres)")
                     st.rerun()
                 else:
                     st.error("Invalid coordinates. Ensure min < max for both lat and lon.")

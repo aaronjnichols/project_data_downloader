@@ -26,7 +26,7 @@ class USGSLidarDownloader(BaseDownloader):
         self.base_url = "https://tnmaccess.nationalmap.gov/api/v1/products"
         self.session = DownloadSession(
             max_retries=self.config.get("max_retries", 3),
-            timeout=self.config.get("timeout", 60),
+            timeout=self.config.get("timeout", 600),  # 10 minutes for large DEM downloads
         )
 
     @property
@@ -244,24 +244,75 @@ class USGSLidarDownloader(BaseDownloader):
                     error_message="Failed to process DEM (clipping or unit conversion)",
                 )
             
+            # Create organized folder structure
+            dem_folder = os.path.join(output_path, "DEM")
+            shapefile_folder = os.path.join(output_path, "Shapefile")
+            dxf_folder = os.path.join(output_path, "DXF")
+            
+            os.makedirs(dem_folder, exist_ok=True)
+            
+            # Move DEM to DEM folder
+            final_dem_name = f"usgs_dem_{safe_file_name(str(self.config.get('contour_interval', 'raw')))}_ft.tif"
+            final_dem_path = os.path.join(dem_folder, final_dem_name)
+            
+            # Move/rename the DEM file
+            import shutil
+            shutil.move(processed_dem_path, final_dem_path)
+            
             metadata = {
-                "dem_path": processed_dem_path,
-                "data_type": "raster_dem",
-                "dataset_used": dataset_used
+                "dem_path": final_dem_path,
+                "data_type": "raster_dem", 
+                "dataset_used": dataset_used,
+                "organized_folders": True
             }
 
+            # Generate contours if requested
             interval = self.config.get("contour_interval")
             if interval:
+                os.makedirs(shapefile_folder, exist_ok=True)
+                os.makedirs(dxf_folder, exist_ok=True)
+                
+                # Generate shapefile contours
                 contour_name = f"contours_{safe_file_name(str(interval))}_ft.shp"
-                contour_path = os.path.join(output_path, contour_name)
-                success = dem_to_contours(processed_dem_path, contour_path, interval)
+                contour_path = os.path.join(shapefile_folder, contour_name)
+                
+                success = dem_to_contours(final_dem_path, contour_path, interval)
                 if success:
-                    metadata["contour_path"] = contour_path
+                    metadata["contour_shapefile_path"] = contour_path
+                    
+                    # Automatically generate DXF file from shapefile
+                    dxf_name = f"contours_{safe_file_name(str(interval))}_ft.dxf" 
+                    dxf_path = os.path.join(dxf_folder, dxf_name)
+                    
+                    try:
+                        # Convert shapefile to DXF using ogr2ogr (more reliable for DXF)
+                        import subprocess
+                        
+                        # Use ogr2ogr command to convert shapefile to DXF
+                        cmd = [
+                            'ogr2ogr',
+                            '-f', 'DXF',
+                            dxf_path,
+                            contour_path
+                        ]
+                        
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                        
+                        if result.returncode == 0:
+                            metadata["contour_dxf_path"] = dxf_path
+                            logger.info(f"Created contour DXF: {dxf_path}")
+                        else:
+                            logger.warning(f"ogr2ogr failed: {result.stderr}")
+                            
+                    except subprocess.TimeoutExpired:
+                        logger.warning("DXF conversion timed out")
+                    except Exception as e:
+                        logger.warning(f"Failed to create DXF file: {e}")
 
-            # Clean up intermediate files - only keep final products
-            self._cleanup_intermediate_files(output_path, processed_dem_path)
+            # Clean up intermediate files - only keep final organized products
+            self._cleanup_intermediate_files(output_path, final_dem_path)
 
-            return DownloadResult(success=True, layer_id=layer_id, file_path=processed_dem_path, metadata=metadata)
+            return DownloadResult(success=True, layer_id=layer_id, file_path=final_dem_path, metadata=metadata)
 
     def _process_dem(self, dem_path: str, output_path: str, **kwargs) -> str:
         """
