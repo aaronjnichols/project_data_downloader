@@ -2,95 +2,123 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Essential Development Commands
 
-Multi-source geospatial data downloader that fetches data from federal/public sources (FEMA, USGS, NOAA) within user-defined Areas of Interest (AOI). Provides both CLI and REST API interfaces.
-
-## Key Commands
-
-### Running the Application
+### Setup and Installation
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+make install              # Install production dependencies  
+make install-dev         # Install development dependencies + dev tools
+make dev-setup          # Complete development environment setup
+```
 
-# CLI: Full download with project config
+### Code Quality and Testing
+```bash
+make quality            # Run all code quality checks (format, lint, type-check, security)
+make test              # Run all tests
+make test-unit         # Run unit tests only
+make test-integration  # Run integration tests only
+make test-coverage     # Run tests with coverage report
+```
+
+### Application Services
+```bash
+make run-api           # Start FastAPI server (http://localhost:8000)
+make run-streamlit     # Start Streamlit web interface
+python main.py --project my_project.yaml  # CLI download execution
+```
+
+### Individual Quality Tools
+```bash
+make format            # Format code with black and isort
+make lint              # Run flake8 linting
+make type-check        # Run mypy type checking
+make security          # Run bandit security checks and safety dependency scanning
+```
+
+## Architecture Overview
+
+This is a **plugin-based geospatial data downloader** with three main interfaces:
+
+### 1. Core Architecture
+- **`src/core/base_downloader.py`** - Abstract base class defining the plugin interface
+- **`src/core/aoi_manager.py`** - Area of Interest (AOI) shapefile management
+- **`src/core/data_processor.py`** - Data processing and clipping operations
+- **`src/downloaders/`** - Plugin modules for each data source (FEMA, USGS, NOAA)
+
+### 2. Three User Interfaces
+- **CLI**: `main.py` - Command-line interface using YAML project configurations
+- **REST API**: `api/main.py` - FastAPI server for programmatic access and GPT Actions
+- **Web UI**: `streamlit_app.py` - Interactive web interface with map visualization
+
+### 3. Data Sources (Plugin System)
+- **FEMA NFHL**: Flood hazard layers via WFS services
+- **USGS LiDAR**: 3DEP elevation data with contour generation
+- **NOAA Atlas 14**: Precipitation frequency data with PDF report generation
+
+## Project Configuration
+
+### Main Configuration Files
+- **`config/project_template.yaml`** - Template for creating project configurations
+- **`config/settings.yaml`** - Global application settings
+- **`pyproject.toml`** - Python project metadata, dependencies, and tool configurations
+
+### Creating a New Project
+```bash
+cp config/project_template.yaml my_project.yaml
+# Edit my_project.yaml with your AOI path and data source selections
 python main.py --project my_project.yaml
-
-# CLI: Download specific sources only
-python main.py --project my_project.yaml --sources fema noaa_atlas14
-
-# CLI: Dry run to preview downloads
-python main.py --project my_project.yaml --dry-run
-
-# CLI: List available data layers
-python main.py --list-layers
-
-# API: Start server
-python start_api.py
-
-# API: Test functionality
-python test_api.py
-
-# Docker deployment
-docker-compose up --build
 ```
 
-## Architecture
+## Plugin Development Pattern
 
-### Plugin-Based Downloader System
-All data source downloaders inherit from `BaseDownloader` in `core/base_downloader.py`. Each downloader must implement:
-- `query_layers()` - Return available layers for the AOI
-- `download_layer()` - Download and clip data to AOI bounds
-- Auto-registration in `downloaders/__init__.py`
+New data source plugins must inherit from `BaseDownloader` and implement:
+- `get_available_layers()` - Return list of available data layers
+- `download_layer()` - Download a specific layer within the AOI
+- Error handling with retry strategies
+- Metadata generation for downloaded data
 
-### Core Components
-- **`main.py`**: CLI orchestrator that coordinates AOI loading, downloader initialization, and output processing
-- **`core/aoi_manager.py`**: Validates and reprojects AOI shapefiles, handles spatial reference systems
-- **`core/data_processor.py`**: Organizes outputs, generates metadata, creates summary reports
-- **`api/`**: FastAPI implementation with background job processing and file serving
+## Key Dependencies and Their Usage
 
-### Data Flow
-1. Load AOI shapefile → Validate/reproject to appropriate CRS
-2. Initialize selected downloaders → Query available layers
-3. Download data → Clip to AOI bounds
-4. Process outputs → Generate metadata and reports
-5. Organize in hierarchical structure under `output/Project_Name/`
+- **geopandas/shapely**: Spatial data processing and AOI clipping
+- **rasterio**: Raster data handling (DEMs, contours)
+- **fastapi/uvicorn**: REST API framework and server
+- **streamlit**: Web interface framework
+- **matplotlib**: PDF report generation for NOAA data
+- **requests**: HTTP downloads with retry logic
 
-### Currently Implemented Downloaders
-- **FEMA** (`fema_downloader.py`): 31 NFHL layers via ArcGIS REST API
-- **USGS LiDAR** (`usgs_lidar_downloader.py`): 3DEP DEMs with optional contour generation via rasterio
-- **NOAA Atlas 14** (`noaa_atlas14_downloader.py`): Precipitation data with automatic PDF report generation
+## Output Structure
 
-### Adding New Data Sources
-1. Create new class inheriting from `BaseDownloader`
-2. Implement required methods with proper `LayerInfo` and `DownloadResult` returns
-3. Register in `downloaders/__init__.py`
-4. Handle spatial clipping to AOI bounds
-5. Generate appropriate metadata
-
-## Configuration
-
-### Project Configuration (YAML)
-```yaml
-project_name: "My Project"
-aoi_shapefile: "data/my_aoi.shp"
-sources:
-  fema:
-    layers: ["S_FLD_HAZ_AR", "S_BFE"]
-  usgs_lidar:
-    resolution: 1m
-    generate_contours: true
+All downloads are organized as:
+```
+output/
+├── {project_name}/
+│   ├── jobs/{job_id}.json          # Job metadata
+│   └── results/{job_id}/           # Downloaded data
+│       ├── {files}.shp             # Shapefiles
+│       ├── {files}.tif             # Raster data
+│       ├── {files}.pdf             # Generated reports
+│       └── {job_id}_results.zip    # Compressed package
 ```
 
-### API Integration
-- OpenAPI schema at `/openapi.json` for GPT Actions
-- Background job processing with status tracking
-- File download endpoints for result retrieval
+## Testing Strategy
 
-## Important Patterns
+- **Unit tests** (`tests/unit/`): Individual component testing
+- **Integration tests** (`tests/integration/`): API and Streamlit interface testing  
+- **E2E tests** (`tests/e2e/`): Full workflow testing with real data sources
+- **Test markers**: `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.e2e`
 
-- **Dataclass Models**: Use `LayerInfo` and `DownloadResult` for type safety
-- **Spatial Operations**: All data automatically clipped to AOI bounds using GeoPandas/rasterio
-- **Error Handling**: Structured logging with proper error propagation
-- **Metadata**: Generate JSON metadata for all downloads
-- **Registry Pattern**: Downloaders auto-register on import
+## Development Workflow
+
+1. Use `make dev-setup` for initial environment setup
+2. Run `make quality` before committing code
+3. Use `make test` to verify functionality
+4. For new features, add corresponding unit and integration tests
+5. Update documentation in `docs/` for user-facing changes
+
+## Important Notes
+
+- All geospatial operations require an AOI shapefile in `data/` directory
+- API runs on port 8000, Streamlit on default port (8501)
+- Large downloads are handled asynchronously with job tracking
+- PDF generation for NOAA data requires matplotlib backend configuration
+- Security scanning is included in quality checks via bandit and safety
