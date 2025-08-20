@@ -148,9 +148,15 @@ class NOAAPrecipitationReport:
         duration_hours = self._convert_durations_to_hours(durations)
         
         # Plot 1: Precipitation depth vs Duration for different return periods
-        ax1.set_title('PDS-based depth-duration-frequency (DDF) curves\n' + 
-                     f"Latitude: {metadata['centroid_coordinates']['latitude']:.4f}°, " +
-                     f"Longitude: {metadata['centroid_coordinates']['longitude']:.4f}°", 
+        # Safely format coordinates (handle both string and numeric values)
+        try:
+            lat = float(metadata['centroid_coordinates']['latitude'])
+            lon = float(metadata['centroid_coordinates']['longitude'])
+            coord_text = f"Latitude: {lat:.4f}°, Longitude: {lon:.4f}°"
+        except (ValueError, TypeError, KeyError):
+            coord_text = f"Latitude: {metadata.get('centroid_coordinates', {}).get('latitude', 'N/A')}, Longitude: {metadata.get('centroid_coordinates', {}).get('longitude', 'N/A')}"
+        
+        ax1.set_title('PDS-based depth-duration-frequency (DDF) curves\n' + coord_text, 
                      fontsize=10, pad=15)
         
         for rp in return_periods:

@@ -28,10 +28,10 @@ import folium
 from streamlit_folium import st_folium
 
 # Import our custom modules
-from api_client import GeospatialAPIClient
-from streamlit_config import Config
-from unified_map import display_unified_map_interface
-from cad_export import export_job_to_cad_formats, create_cad_export_zip
+from legacy.api_client import GeospatialAPIClient
+from config.streamlit_config import Config
+from legacy.unified_map import display_unified_map_interface
+from legacy.cad_export import export_job_to_cad_formats, create_cad_export_zip
 
 # Configure page
 st.set_page_config(
@@ -903,7 +903,7 @@ def generate_location_map_exhibit_ui():
         return
     
     with st.spinner("🗺️ Generating location map exhibit..."):
-        from unified_map import generate_location_map_exhibit
+        from legacy.unified_map import generate_location_map_exhibit
         
         # Generate the location map exhibit
         location_map_path = generate_location_map_exhibit(geometry, bounds)
