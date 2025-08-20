@@ -248,7 +248,13 @@ Downloaded: {download_date} | Source: NOAA Atlas 14 PFDS Volume 1 Version 5"""
                 if '_year' in col:
                     value = row[col]
                     if pd.notna(value):
-                        row_data.append(f"{value:.3f}")
+                        # Safely convert to float for formatting
+                        try:
+                            numeric_value = float(value)
+                            row_data.append(f"{numeric_value:.3f}")
+                        except (ValueError, TypeError):
+                            # If conversion fails, use string representation
+                            row_data.append(str(value))
                     else:
                         row_data.append("N/A")
             data.append(row_data)
