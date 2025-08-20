@@ -3,7 +3,7 @@ import os
 import json
 import zipfile
 import logging
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional, Any, List
 
 from src.core.base_downloader import BaseDownloader, LayerInfo, DownloadResult
 from src.utils.download_utils import DownloadSession, validate_response_content
@@ -26,8 +26,15 @@ class USGSLidarDownloader(BaseDownloader):
         self.base_url = "https://tnmaccess.nationalmap.gov/api/v1/products"
         self.session = DownloadSession(
             max_retries=self.config.get("max_retries", 3),
-            timeout=self.config.get("timeout", 600),  # 10 minutes for large DEM downloads
+            timeout=self.config.get("timeout", 300),  # Reduced to 5 minutes - better UX
         )
+        
+        # Enhanced configuration options
+        self.preferred_resolution = self.config.get("preferred_resolution", "1m")
+        self.generate_contours = self.config.get("generate_contours", True)
+        self.contour_interval = self.config.get("contour_interval", 5)  # Default 5 feet
+        self.export_formats = self.config.get("export_formats", ["shapefile", "dxf"])
+        self.cleanup_intermediate = self.config.get("cleanup_intermediate", True)
 
     @property
     def source_name(self) -> str:
@@ -49,23 +56,10 @@ class USGSLidarDownloader(BaseDownloader):
             return self._create_error_result(layer_id, f"Unsupported layer {layer_id}")
 
         minx, miny, maxx, maxy = aoi_bounds
-        # Try different DEM datasets in order of preference (highest resolution DEMs first)
-        # Prioritizing DEM raster formats over raw LiDAR point clouds
-        datasets = [
-            "DEM Source (OPR)",  # Original Product Resolution DEMs (sub-meter)
-            "Digital Elevation Model (DEM) 1 meter",  # Current 3DEP name
-            "1-meter DEM",  # Alternative current name
-            "Seamless 1-meter DEM (Limited Availability)",
-            "1/9 arc-second DEM",  # ~3m resolution (was missing)
-            "3DEP Elevation: DEM (1 meter)",  # Legacy name fallback
-            "1/3 arc-second DEM",  # Current name
-            "3DEP Elevation: DEM (1/3 arc-second)",  # Legacy name
-            "1 arc-second DEM",  # Current name  
-            "3DEP Elevation: DEM (1 arc-second)",  # Legacy name
-            "National Elevation Dataset (NED) 1/3 arc-second",  # Legacy fallback
-            "National Elevation Dataset (NED) 1 arc-second",  # Legacy fallback
-            "Lidar Point Cloud (LPC)",  # Raw LiDAR data - fallback option
-        ]
+        # Enhanced dataset selection with user preferences
+        datasets = self._get_prioritized_datasets()
+        
+        self.logger.info(f"Searching for elevation data with preferred resolution: {self.preferred_resolution}")
         
         items = []
         dataset_used = None
@@ -237,39 +231,18 @@ class USGSLidarDownloader(BaseDownloader):
                 "organized_folders": True
             }
 
-            # Generate contours if requested
-            interval = self.config.get("contour_interval")
-            if interval:
-                os.makedirs(shapefile_folder, exist_ok=True)
-                os.makedirs(dxf_folder, exist_ok=True)
-                
-                # Generate shapefile contours
-                contour_name = f"contours_{safe_file_name(str(interval))}_ft.shp"
-                contour_path = os.path.join(shapefile_folder, contour_name)
-                
-                success = dem_to_contours(final_dem_path, contour_path, interval)
-                if success:
-                    metadata["contour_shapefile_path"] = contour_path
-                    
-                    # Automatically generate DXF file from shapefile
-                    dxf_name = f"contours_{safe_file_name(str(interval))}_ft.dxf" 
-                    dxf_path = os.path.join(dxf_folder, dxf_name)
-                    
-                    try:
-                        # Convert shapefile to DXF using Python libraries
-                        success = self._convert_shapefile_to_dxf(contour_path, dxf_path)
-                        
-                        if success:
-                            metadata["contour_dxf_path"] = dxf_path
-                            logger.info(f"Created contour DXF: {dxf_path}")
-                        else:
-                            logger.warning("Failed to create DXF file during conversion")
-                            
-                    except Exception as e:
-                        logger.warning(f"Failed to create DXF file: {e}")
+            # Enhanced contour generation with multiple formats
+            if self.generate_contours and self.contour_interval:
+                contour_results = self._generate_enhanced_contours(
+                    final_dem_path, shapefile_folder, dxf_folder, metadata
+                )
+                metadata.update(contour_results)
 
-            # Clean up intermediate files - only keep final organized products
-            self._cleanup_intermediate_files(output_path, final_dem_path)
+            # Enhanced cleanup with user control
+            if self.cleanup_intermediate:
+                self._cleanup_intermediate_files(output_path, final_dem_path)
+            else:
+                logger.info("Keeping intermediate files as requested")
 
             file_size = os.path.getsize(final_dem_path) if os.path.exists(final_dem_path) else None
             return self._create_success_result(
@@ -418,9 +391,151 @@ class USGSLidarDownloader(BaseDownloader):
         except Exception as e:
             logger.warning(f"Error during file cleanup: {e}")
     
-    def _convert_shapefile_to_dxf(self, shapefile_path: str, dxf_path: str) -> bool:
+    def _get_prioritized_datasets(self) -> List[str]:
         """
-        Convert shapefile contours to DXF format using Python libraries
+        Get prioritized list of datasets based on user preferences
+        
+        Returns:
+            List of dataset names in priority order
+        """
+        # Base datasets organized by resolution
+        datasets_by_resolution = {
+            "sub_meter": [
+                "DEM Source (OPR)",  # Original Product Resolution DEMs
+                "Seamless 1-meter DEM (Limited Availability)",
+            ],
+            "1m": [
+                "Digital Elevation Model (DEM) 1 meter",
+                "1-meter DEM",
+                "3DEP Elevation: DEM (1 meter)",
+            ],
+            "3m": [
+                "1/9 arc-second DEM",
+            ],
+            "10m": [
+                "1/3 arc-second DEM",
+                "3DEP Elevation: DEM (1/3 arc-second)",
+                "National Elevation Dataset (NED) 1/3 arc-second",
+            ],
+            "30m": [
+                "1 arc-second DEM",
+                "3DEP Elevation: DEM (1 arc-second)",
+                "National Elevation Dataset (NED) 1 arc-second",
+            ],
+            "lidar": [
+                "Lidar Point Cloud (LPC)",
+            ]
+        }
+        
+        # Build priority list based on user preference
+        preferred_datasets = []
+        
+        # Start with preferred resolution
+        if self.preferred_resolution in datasets_by_resolution:
+            preferred_datasets.extend(datasets_by_resolution[self.preferred_resolution])
+        
+        # Add other resolutions in order of quality
+        resolution_order = ["sub_meter", "1m", "3m", "10m", "30m", "lidar"]
+        for res in resolution_order:
+            if res != self.preferred_resolution and res in datasets_by_resolution:
+                preferred_datasets.extend(datasets_by_resolution[res])
+        
+        return preferred_datasets
+    
+    def _generate_enhanced_contours(self, dem_path: str, shapefile_folder: str, 
+                                   dxf_folder: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate contours with enhanced options and multiple formats
+        
+        Args:
+            dem_path: Path to DEM file
+            shapefile_folder: Directory for shapefile output
+            dxf_folder: Directory for DXF output
+            metadata: Existing metadata dictionary
+            
+        Returns:
+            Dictionary with contour generation results
+        """
+        contour_results = {}
+        
+        try:
+            # Create output directories
+            os.makedirs(shapefile_folder, exist_ok=True)
+            if "dxf" in self.export_formats:
+                os.makedirs(dxf_folder, exist_ok=True)
+            
+            # Generate shapefile contours
+            if "shapefile" in self.export_formats:
+                contour_name = f"contours_{safe_file_name(str(self.contour_interval))}_ft.shp"
+                contour_path = os.path.join(shapefile_folder, contour_name)
+                
+                self.logger.info(f"Generating contours at {self.contour_interval} ft intervals...")
+                success = dem_to_contours(dem_path, contour_path, self.contour_interval)
+                
+                if success:
+                    contour_results["contour_shapefile_path"] = contour_path
+                    self.logger.info(f"Generated contour shapefile: {contour_path}")
+                    
+                    # Generate DXF if requested and shapefile was successful
+                    if "dxf" in self.export_formats:
+                        dxf_results = self._convert_shapefile_to_dxf_enhanced(
+                            contour_path, dxf_folder
+                        )
+                        contour_results.update(dxf_results)
+                else:
+                    self.logger.warning(f"Failed to generate contours at {self.contour_interval} ft")
+                    contour_results["contour_error"] = "Contour generation failed"
+            
+        except Exception as e:
+            self.logger.error(f"Error in enhanced contour generation: {e}")
+            contour_results["contour_error"] = str(e)
+        
+        return contour_results
+    
+    def _convert_shapefile_to_dxf_enhanced(self, shapefile_path: str, dxf_folder: str) -> Dict[str, Any]:
+        """
+        Enhanced DXF conversion with fallback options and better error handling
+        
+        Args:
+            shapefile_path: Path to input shapefile
+            dxf_folder: Directory for DXF output
+            
+        Returns:
+            Dictionary with conversion results
+        """
+        results = {}
+        
+        dxf_name = f"contours_{safe_file_name(str(self.contour_interval))}_ft.dxf"
+        dxf_path = os.path.join(dxf_folder, dxf_name)
+        
+        # Try enhanced DXF conversion
+        try:
+            success = self._convert_to_dxf_with_ezdxf(shapefile_path, dxf_path)
+            if success:
+                results["contour_dxf_path"] = dxf_path
+                self.logger.info(f"Created enhanced DXF: {dxf_path}")
+                return results
+        except Exception as e:
+            self.logger.warning(f"Enhanced DXF conversion failed: {e}")
+        
+        # Fallback: Simple text-based DXF
+        try:
+            success = self._convert_to_simple_dxf(shapefile_path, dxf_path)
+            if success:
+                results["contour_dxf_path"] = dxf_path
+                results["dxf_format"] = "simple"
+                self.logger.info(f"Created simple DXF: {dxf_path}")
+            else:
+                results["dxf_error"] = "All DXF conversion methods failed"
+        except Exception as e:
+            self.logger.error(f"Simple DXF conversion failed: {e}")
+            results["dxf_error"] = str(e)
+        
+        return results
+    
+    def _convert_to_dxf_with_ezdxf(self, shapefile_path: str, dxf_path: str) -> bool:
+        """
+        Convert using ezdxf library (enhanced version)
         
         Args:
             shapefile_path: Path to input shapefile
@@ -429,61 +544,137 @@ class USGSLidarDownloader(BaseDownloader):
         Returns:
             True if conversion successful, False otherwise
         """
-        logger = logging.getLogger(__name__)
-        
         try:
             import ezdxf
             import geopandas as gpd
-            from shapely.geometry import LineString, Point
             
             # Read shapefile
             gdf = gpd.read_file(shapefile_path)
             
-            # Create new DXF document
-            doc = ezdxf.new('R2010')  # Use AutoCAD 2010 format for compatibility
+            if gdf.empty:
+                self.logger.warning("No contour features found in shapefile")
+                return False
+            
+            # Create new DXF document with enhanced settings
+            doc = ezdxf.new('R2010')
             msp = doc.modelspace()
             
-            # Create contour layer
-            doc.layers.new(name='CONTOURS', dxfattribs={'color': 3})  # Green color
+            # Create contour layer with enhanced attributes
+            layer = doc.layers.new(
+                name='CONTOURS',
+                dxfattribs={
+                    'color': 3,  # Green
+                    'lineweight': 25,  # 0.25mm line weight
+                    'description': f'Contours at {self.contour_interval} ft intervals'
+                }
+            )
             
-            # Process each contour line
+            # Add text style for elevation labels
+            doc.styles.new('ELEVATION_TEXT', dxfattribs={'height': 2.0})
+            
+            contour_count = 0
+            
+            # Process each contour line with enhanced attributes
             for idx, row in gdf.iterrows():
                 geom = row.geometry
                 elevation = row.get('ELEV', row.get('elevation', row.get('value', 0)))
                 
-                if geom.geom_type == 'LineString':
-                    # Convert linestring coordinates to DXF format
-                    points = [(x, y, float(elevation)) for x, y in geom.coords]
-                    
-                    # Create 3D polyline
-                    msp.add_polyline3d(
-                        points=points,
-                        dxfattribs={
-                            'layer': 'CONTOURS',
-                            'color': 3
-                        }
-                    )
+                # Enhanced elevation value handling
+                try:
+                    elev_value = float(elevation)
+                except (ValueError, TypeError):
+                    elev_value = 0.0
+                    self.logger.warning(f"Invalid elevation value at index {idx}: {elevation}")
                 
-                elif geom.geom_type == 'MultiLineString':
-                    # Handle multi-linestrings
-                    for line in geom.geoms:
-                        points = [(x, y, float(elevation)) for x, y in line.coords]
+                if geom.geom_type == 'LineString':
+                    points = [(x, y, elev_value) for x, y in geom.coords]
+                    
+                    if len(points) >= 2:  # Ensure valid polyline
                         msp.add_polyline3d(
                             points=points,
                             dxfattribs={
-                                'layer': 'CONTOURS', 
-                                'color': 3
+                                'layer': 'CONTOURS',
+                                'color': 3,
+                                'elevation': elev_value
                             }
                         )
+                        contour_count += 1
+                
+                elif geom.geom_type == 'MultiLineString':
+                    for line in geom.geoms:
+                        points = [(x, y, elev_value) for x, y in line.coords]
+                        if len(points) >= 2:
+                            msp.add_polyline3d(
+                                points=points,
+                                dxfattribs={
+                                    'layer': 'CONTOURS',
+                                    'color': 3,
+                                    'elevation': elev_value
+                                }
+                            )
+                            contour_count += 1
             
             # Save DXF file
             doc.saveas(dxf_path)
-            logger.info(f"Successfully converted {len(gdf)} contour features to DXF")
+            self.logger.info(f"Successfully converted {contour_count} contour features to enhanced DXF")
             return True
             
         except ImportError:
-            logger.warning("ezdxf library not available for DXF conversion")
+            self.logger.warning("ezdxf library not available for enhanced DXF conversion")
             return False
         except Exception as e:
-            logger.error(f"Error converting shapefile to DXF: {e}")
+            self.logger.error(f"Error in enhanced DXF conversion: {e}")
+            return False
+    
+    def _convert_to_simple_dxf(self, shapefile_path: str, dxf_path: str) -> bool:
+        """
+        Fallback: Create simple DXF using basic text format
+        
+        Args:
+            shapefile_path: Path to input shapefile
+            dxf_path: Path for output DXF file
+            
+        Returns:
+            True if conversion successful, False otherwise
+        """
+        try:
+            import geopandas as gpd
+            
+            gdf = gpd.read_file(shapefile_path)
+            
+            if gdf.empty:
+                return False
+            
+            # Create simple DXF header and entities
+            with open(dxf_path, 'w') as f:
+                # Write minimal DXF header
+                f.write("0\nSECTION\n2\nHEADER\n0\nENDSEC\n")
+                f.write("0\nSECTION\n2\nTABLES\n0\nENDSEC\n")
+                f.write("0\nSECTION\n2\nENTITIES\n")
+                
+                # Write contour lines as POLYLINE entities
+                for idx, row in gdf.iterrows():
+                    geom = row.geometry
+                    elevation = row.get('ELEV', row.get('elevation', row.get('value', 0)))
+                    
+                    try:
+                        elev_value = float(elevation)
+                    except (ValueError, TypeError):
+                        elev_value = 0.0
+                    
+                    if geom.geom_type == 'LineString':
+                        coords = list(geom.coords)
+                        if len(coords) >= 2:
+                            f.write(f"0\nPOLYLINE\n8\nCONTOURS\n62\n3\n70\n8\n")
+                            for x, y in coords:
+                                f.write(f"0\nVERTEX\n8\nCONTOURS\n10\n{x:.6f}\n20\n{y:.6f}\n30\n{elev_value:.2f}\n")
+                            f.write("0\nSEQEND\n")
+                
+                f.write("0\nENDSEC\n0\nEOF\n")
+            
+            self.logger.info(f"Created simple DXF with {len(gdf)} contour features")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error creating simple DXF: {e}")
             return False

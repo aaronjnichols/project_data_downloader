@@ -13,6 +13,23 @@ import os
 import time
 from functools import wraps
 import geopandas as gpd
+import random
+from enum import Enum
+
+
+class RetryStrategy(Enum):
+    """Retry strategy enumeration"""
+    EXPONENTIAL_BACKOFF = "exponential_backoff"
+    FIXED_DELAY = "fixed_delay"
+    LINEAR_BACKOFF = "linear_backoff"
+    IMMEDIATE = "immediate"
+
+
+class ErrorSeverity(Enum):
+    """Error severity levels"""
+    RECOVERABLE = "recoverable"  # Can retry
+    TEMPORARY = "temporary"      # Should retry with delay
+    PERMANENT = "permanent"      # Should not retry
 
 
 @dataclass
@@ -379,3 +396,291 @@ class BaseDownloader(ABC):
             safe_name += extension
         
         return safe_name
+    
+    def _classify_error(self, error: Exception) -> ErrorSeverity:
+        """
+        Classify error severity to determine retry strategy
+        
+        Args:
+            error: Exception to classify
+            
+        Returns:
+            ErrorSeverity indicating how to handle the error
+        """
+        import requests
+        
+        # Network-related errors that should be retried
+        if isinstance(error, (requests.exceptions.Timeout, 
+                            requests.exceptions.ConnectionError)):
+            return ErrorSeverity.TEMPORARY
+        
+        # HTTP errors - some are retryable, others are not
+        if isinstance(error, requests.exceptions.HTTPError):
+            status_code = getattr(error.response, 'status_code', 500)
+            if status_code in [429, 500, 502, 503, 504]:  # Rate limit and server errors
+                return ErrorSeverity.TEMPORARY
+            elif status_code in [400, 401, 403, 404]:  # Client errors
+                return ErrorSeverity.PERMANENT
+            else:
+                return ErrorSeverity.RECOVERABLE
+        
+        # File system errors
+        if isinstance(error, (OSError, IOError)):
+            if isinstance(error, PermissionError):
+                return ErrorSeverity.PERMANENT
+            else:
+                return ErrorSeverity.RECOVERABLE
+        
+        # Memory errors
+        if isinstance(error, MemoryError):
+            return ErrorSeverity.TEMPORARY
+        
+        # Default to recoverable for unknown errors
+        return ErrorSeverity.RECOVERABLE
+    
+    def _calculate_retry_delay(self, attempt: int, strategy: RetryStrategy = RetryStrategy.EXPONENTIAL_BACKOFF,
+                             base_delay: float = 1.0, max_delay: float = 60.0, jitter: bool = True) -> float:
+        """
+        Calculate delay before next retry attempt
+        
+        Args:
+            attempt: Current attempt number (1-based)
+            strategy: Retry strategy to use
+            base_delay: Base delay in seconds
+            max_delay: Maximum delay in seconds
+            jitter: Whether to add random jitter to prevent thundering herd
+            
+        Returns:
+            Delay in seconds before next attempt
+        """
+        if strategy == RetryStrategy.IMMEDIATE:
+            delay = 0.0
+        elif strategy == RetryStrategy.FIXED_DELAY:
+            delay = base_delay
+        elif strategy == RetryStrategy.LINEAR_BACKOFF:
+            delay = base_delay * attempt
+        elif strategy == RetryStrategy.EXPONENTIAL_BACKOFF:
+            delay = base_delay * (2 ** (attempt - 1))
+        else:
+            delay = base_delay
+        
+        # Cap at maximum delay
+        delay = min(delay, max_delay)
+        
+        # Add jitter to prevent thundering herd
+        if jitter and delay > 0:
+            jitter_amount = delay * 0.1  # 10% jitter
+            delay += random.uniform(-jitter_amount, jitter_amount)
+        
+        return max(0.0, delay)
+    
+    def _should_retry(self, error: Exception, attempt: int, max_attempts: int) -> bool:
+        """
+        Determine if an operation should be retried
+        
+        Args:
+            error: Exception that occurred
+            attempt: Current attempt number
+            max_attempts: Maximum allowed attempts
+            
+        Returns:
+            True if should retry, False otherwise
+        """
+        if attempt >= max_attempts:
+            return False
+        
+        severity = self._classify_error(error)
+        return severity in [ErrorSeverity.RECOVERABLE, ErrorSeverity.TEMPORARY]
+    
+    def _execute_with_retry(self, operation_func, layer_id: str, *args, 
+                          max_attempts: int = 3, 
+                          retry_strategy: RetryStrategy = RetryStrategy.EXPONENTIAL_BACKOFF,
+                          base_delay: float = 1.0, **kwargs) -> DownloadResult:
+        """
+        Execute an operation with retry logic and error recovery
+        
+        Args:
+            operation_func: Function to execute with retries
+            layer_id: Layer ID for error reporting
+            *args: Arguments for operation_func
+            max_attempts: Maximum number of retry attempts
+            retry_strategy: Strategy for calculating retry delays
+            base_delay: Base delay between retries
+            **kwargs: Keyword arguments for operation_func
+            
+        Returns:
+            DownloadResult from successful execution or final error
+        """
+        last_error = None
+        
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.logger.info(f"Executing operation for layer {layer_id} (attempt {attempt}/{max_attempts})")
+                result = operation_func(*args, **kwargs)
+                
+                if attempt > 1:
+                    self.logger.info(f"Operation succeeded on attempt {attempt} for layer {layer_id}")
+                
+                return result
+                
+            except Exception as error:
+                last_error = error
+                self.logger.warning(f"Attempt {attempt} failed for layer {layer_id}: {error}")
+                
+                if not self._should_retry(error, attempt, max_attempts):
+                    self.logger.error(f"Error classified as non-retryable or max attempts reached for layer {layer_id}")
+                    break
+                
+                if attempt < max_attempts:
+                    delay = self._calculate_retry_delay(attempt, retry_strategy, base_delay)
+                    if delay > 0:
+                        self.logger.info(f"Waiting {delay:.2f} seconds before retry...")
+                        time.sleep(delay)
+        
+        # All attempts failed
+        severity = self._classify_error(last_error) if last_error else ErrorSeverity.PERMANENT
+        error_msg = f"Operation failed after {max_attempts} attempts. Last error: {last_error}"
+        
+        return self._create_error_result(layer_id, error_msg)
+    
+    def _validate_file_integrity(self, file_path: str, expected_size: Optional[int] = None) -> bool:
+        """
+        Validate the integrity of a downloaded file
+        
+        Args:
+            file_path: Path to file to validate
+            expected_size: Expected file size in bytes (optional)
+            
+        Returns:
+            True if file appears valid, False otherwise
+        """
+        try:
+            if not os.path.exists(file_path):
+                self.logger.error(f"File does not exist: {file_path}")
+                return False
+            
+            file_size = os.path.getsize(file_path)
+            
+            # Check if file is empty
+            if file_size == 0:
+                self.logger.error(f"File is empty: {file_path}")
+                return False
+            
+            # Check expected size if provided (allow 5% variance)
+            if expected_size is not None:
+                size_variance = abs(file_size - expected_size) / expected_size
+                if size_variance > 0.05:  # 5% tolerance
+                    self.logger.warning(f"File size variance {size_variance:.1%} for {file_path}")
+                    return False
+            
+            # Try to read the first few bytes to ensure file is accessible
+            with open(file_path, 'rb') as f:
+                header = f.read(1024)  # Read first 1KB
+                if not header:
+                    self.logger.error(f"Cannot read file header: {file_path}")
+                    return False
+            
+            self.logger.debug(f"File validation passed: {file_path} ({file_size} bytes)")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"File validation error for {file_path}: {e}")
+            return False
+    
+    def _cleanup_partial_download(self, file_path: str) -> bool:
+        """
+        Clean up partially downloaded or corrupted files
+        
+        Args:
+            file_path: Path to file to clean up
+            
+        Returns:
+            True if cleanup successful, False otherwise
+        """
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                self.logger.info(f"Cleaned up partial download: {file_path}")
+                return True
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup partial download {file_path}: {e}")
+            return False
+    
+    def _recover_from_partial_download(self, file_path: str, download_func, *args, **kwargs) -> bool:
+        """
+        Attempt to recover from a partial download
+        
+        Args:
+            file_path: Path to the partially downloaded file
+            download_func: Function to re-attempt download
+            *args: Arguments for download_func
+            **kwargs: Keyword arguments for download_func
+            
+        Returns:
+            True if recovery successful, False otherwise
+        """
+        try:
+            self.logger.info(f"Attempting recovery from partial download: {file_path}")
+            
+            # Clean up partial file
+            if not self._cleanup_partial_download(file_path):
+                return False
+            
+            # Re-attempt download
+            return download_func(*args, **kwargs)
+            
+        except Exception as e:
+            self.logger.error(f"Recovery failed for {file_path}: {e}")
+            return False
+    
+    def _handle_disk_space_error(self, output_path: str, required_space_mb: float = 100.0) -> bool:
+        """
+        Handle disk space errors by checking available space and suggesting cleanup
+        
+        Args:
+            output_path: Output directory path
+            required_space_mb: Required space in MB
+            
+        Returns:
+            True if sufficient space is available, False otherwise
+        """
+        try:
+            import shutil
+            
+            # Check available disk space
+            total, used, free = shutil.disk_usage(output_path)
+            free_mb = free / (1024 * 1024)
+            
+            self.logger.info(f"Disk space check: {free_mb:.1f} MB available, {required_space_mb:.1f} MB required")
+            
+            if free_mb < required_space_mb:
+                self.logger.error(f"Insufficient disk space: {free_mb:.1f} MB available, {required_space_mb:.1f} MB required")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.warning(f"Could not check disk space: {e}")
+            return True  # Assume OK if we can't check
+    
+    def _create_recovery_metadata(self, layer_id: str, error: Exception, attempt: int) -> Dict[str, Any]:
+        """
+        Create metadata for recovery attempts
+        
+        Args:
+            layer_id: Layer ID that failed
+            error: Exception that occurred
+            attempt: Attempt number
+            
+        Returns:
+            Dictionary with recovery metadata
+        """
+        return {
+            'layer_id': layer_id,
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'attempt_number': attempt,
+            'timestamp': time.time(),
+            'recovery_strategy': self._classify_error(error).value
+        }
