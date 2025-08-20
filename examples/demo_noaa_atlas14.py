@@ -12,8 +12,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.aoi_manager import AOIManager
-from downloaders.noaa_atlas14_downloader import NOAAAtlas14Downloader
+from src.core.aoi_manager import AOIManager
+from src.downloaders.noaa_atlas14_downloader import NOAAAtlas14Downloader
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

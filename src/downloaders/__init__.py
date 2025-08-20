@@ -1,6 +1,6 @@
 # Downloaders package - Plugin registration for data source downloaders
 from typing import Dict, Type
-from core.base_downloader import BaseDownloader
+from src.core.base_downloader import BaseDownloader
 
 # Registry of available downloaders
 _downloader_registry: Dict[str, Type[BaseDownloader]] = {}

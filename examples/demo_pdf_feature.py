@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import project modules
-from core.aoi_manager import AOIManager
-from downloaders.noaa_atlas14_downloader import NOAAAtlas14Downloader
+from src.core.aoi_manager import AOIManager
+from src.downloaders.noaa_atlas14_downloader import NOAAAtlas14Downloader
 
 
 def demonstrate_pdf_feature():

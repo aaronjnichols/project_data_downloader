@@ -158,4 +158,16 @@ safety-report.json
 
 # IDE specific
 .vscode/settings.json
-.vscode/launch.json 
+.vscode/launch.json
+
+# Phase 2.5 Cleanup additions
+archive/
+legacy/
+screenshots/
+*.png
+*.jpg
+*.jpeg
+
+# Runtime files that shouldn't be committed
+downloader.log
+*.qmd 

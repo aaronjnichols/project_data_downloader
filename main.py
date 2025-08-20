@@ -14,10 +14,10 @@ from typing import Dict, List
 sys.path.insert(0, str(Path(__file__).parent))
 
 import yaml
-from core.aoi_manager import AOIManager
-from core.data_processor import DataProcessor
-from core.base_downloader import DownloadResult
-from downloaders import get_downloader, list_downloaders
+from src.core.aoi_manager import AOIManager
+from src.core.data_processor import DataProcessor
+from src.core.base_downloader import DownloadResult
+from src.downloaders import get_downloader, list_downloaders
 
 
 def setup_logging(config: Dict) -> None:

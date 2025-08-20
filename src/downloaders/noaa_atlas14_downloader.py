@@ -4,14 +4,14 @@ Downloads precipitation frequency estimates from NOAA's PFDS API for the centroi
 """
 import os
 import pandas as pd
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, Any
 import requests
 import logging
 from datetime import datetime
 import json
 
-from core.base_downloader import BaseDownloader, LayerInfo, DownloadResult
-from utils.pdf_utils import generate_precipitation_pdf
+from src.core.base_downloader import BaseDownloader, LayerInfo, DownloadResult
+from src.utils.pdf_utils import generate_precipitation_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class NOAAAtlas14Downloader(BaseDownloader):
         )
     }
     
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         self.base_url = "https://hdsc.nws.noaa.gov/cgi-bin/hdsc/new/fe_text.csv"
         self.timeout = self.config.get('timeout', 30)
@@ -51,12 +51,8 @@ class NOAAAtlas14Downloader(BaseDownloader):
                       output_path: str, **kwargs) -> DownloadResult:
         """Download NOAA Atlas 14 data for the centroid of the AOI"""
         
-        if layer_id not in self.AVAILABLE_LAYERS:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id, 
-                error_message=f"Unknown layer ID: {layer_id}. Available layers: {list(self.AVAILABLE_LAYERS.keys())}"
-            )
+        if not self._validate_layer_id(layer_id):
+            return self._create_error_result(layer_id, f"Unknown layer ID: {layer_id}. Available layers: {list(self.AVAILABLE_LAYERS.keys())}")
         
         # Calculate centroid of AOI bounds
         minx, miny, maxx, maxy = aoi_bounds
@@ -67,20 +63,12 @@ class NOAAAtlas14Downloader(BaseDownloader):
         
         # Validate coverage area
         if not self._validate_coverage(centroid_lat, centroid_lon):
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message=f"Coordinates ({centroid_lat:.6f}, {centroid_lon:.6f}) may be outside NOAA Atlas 14 coverage area"
-            )
+            return self._create_error_result(layer_id, f"Coordinates ({centroid_lat:.6f}, {centroid_lon:.6f}) may be outside NOAA Atlas 14 coverage area")
         
         # Parse layer parameters
         parts = layer_id.split('_')
         if len(parts) != 3:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message=f"Invalid layer ID format: {layer_id}"
-            )
+            return self._create_error_result(layer_id, f"Invalid layer ID format: {layer_id}")
         
         series = parts[0]  # pds or ams
         data_type = parts[1]  # depth or intensity  
@@ -104,11 +92,7 @@ class NOAAAtlas14Downloader(BaseDownloader):
                 
                 # Check if response contains valid data
                 if not response.text or 'No data available' in response.text:
-                    return DownloadResult(
-                        success=False,
-                        layer_id=layer_id,
-                        error_message="No precipitation frequency data available for this location"
-                    )
+                    return self._create_error_result(layer_id, "No precipitation frequency data available for this location")
                 
                 # Create output directory
                 os.makedirs(output_path, exist_ok=True)
@@ -175,54 +159,35 @@ class NOAAAtlas14Downloader(BaseDownloader):
                     logger.info(f"Successfully downloaded NOAA depth-duration-frequency data to {output_file}")
                     logger.info(f"Data contains {feature_count} precipitation frequency estimates")
                     
-                    return DownloadResult(
-                        success=True,
+                    file_size = os.path.getsize(output_file) if os.path.exists(output_file) else None
+                    return self._create_success_result(
                         layer_id=layer_id,
-                        feature_count=feature_count,
                         file_path=output_file,
+                        feature_count=feature_count,
+                        file_size_bytes=file_size,
                         metadata=metadata
                     )
                     
                 except Exception as parse_error:
                     logger.error(f"Error parsing downloaded data: {parse_error}")
-                    return DownloadResult(
-                        success=False,
-                        layer_id=layer_id,
-                        error_message=f"Error parsing downloaded data: {parse_error}"
-                    )
+                    return self._create_error_result(layer_id, f"Error parsing downloaded data: {parse_error}")
                 
             except requests.exceptions.Timeout:
                 logger.warning(f"Request timeout on attempt {attempt + 1}")
                 if attempt == self.max_retries - 1:
-                    return DownloadResult(
-                        success=False,
-                        layer_id=layer_id,
-                        error_message=f"Request timed out after {self.max_retries} attempts"
-                    )
+                    return self._create_error_result(layer_id, f"Request timed out after {self.max_retries} attempts")
                 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Request error on attempt {attempt + 1}: {e}")
                 if attempt == self.max_retries - 1:
-                    return DownloadResult(
-                        success=False,
-                        layer_id=layer_id,
-                        error_message=f"Request failed after {self.max_retries} attempts: {e}"
-                    )
+                    return self._create_error_result(layer_id, f"Request failed after {self.max_retries} attempts: {e}")
                 
             except Exception as e:
                 logger.error(f"Unexpected error downloading NOAA Atlas 14 data: {e}")
-                return DownloadResult(
-                    success=False,
-                    layer_id=layer_id,
-                    error_message=f"Unexpected error: {e}"
-                )
+                return self._create_error_result(layer_id, f"Unexpected error: {e}")
         
         # Should not reach here, but just in case
-        return DownloadResult(
-            success=False,
-            layer_id=layer_id,
-            error_message="Download failed for unknown reason"
-        )
+        return self._create_error_result(layer_id, "Download failed for unknown reason")
     
     def _validate_coverage(self, lat: float, lon: float) -> bool:
         """
@@ -281,7 +246,7 @@ class NOAAAtlas14Downloader(BaseDownloader):
         
         return self._validate_coverage(centroid_lat, centroid_lon)
     
-    def _parse_noaa_csv(self, file_path: str) -> Dict:
+    def _parse_noaa_csv(self, file_path: str) -> Dict[str, Any]:
         """
         Parse the NOAA Atlas 14 CSV format which has non-standard structure
         

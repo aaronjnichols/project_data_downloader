@@ -18,14 +18,14 @@ logging.basicConfig(
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.data_processor import DataProcessor
-from utils.spatial_utils import create_contours
+from src.core.data_processor import DataProcessor
+from src.utils.spatial_utils import create_contours
 
 def test_dem_processing():
     """Test DEM processing with a smaller dataset"""
     import yaml
-    from core.aoi_manager import AOIManager
-    from downloaders.usgs_lidar_downloader import USGSLidarDownloader
+    from src.core.aoi_manager import AOIManager
+    from src.downloaders.usgs_lidar_downloader import USGSLidarDownloader
     
     logger = logging.getLogger(__name__)
     

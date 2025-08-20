@@ -6,12 +6,12 @@ import os
 import io
 import tempfile
 import zipfile
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, Any
 import geopandas as gpd
 
-from core.base_downloader import BaseDownloader, LayerInfo, DownloadResult
-from utils.download_utils import DownloadSession, extract_zip_response, validate_response_content
-from utils.spatial_utils import clip_vector_to_aoi, safe_file_name
+from src.core.base_downloader import BaseDownloader, LayerInfo, DownloadResult
+from src.utils.download_utils import DownloadSession, extract_zip_response, validate_response_content
+from src.utils.spatial_utils import clip_vector_to_aoi, safe_file_name
 
 
 class FEMADownloader(BaseDownloader):
@@ -151,7 +151,7 @@ class FEMADownloader(BaseDownloader):
         )
     }
     
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         self.base_url = "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer"
         self.wfs_url = "https://hazards.fema.gov/arcgis/services/public/NFHL/MapServer/WFSServer"
@@ -175,12 +175,8 @@ class FEMADownloader(BaseDownloader):
                       output_path: str, **kwargs) -> DownloadResult:
         """Download a specific FEMA NFHL layer"""
         
-        if layer_id not in self.NFHL_LAYERS:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message=f"Unknown layer ID: {layer_id}"
-            )
+        if not self._validate_layer_id(layer_id):
+            return self._create_error_result(layer_id, f"Unknown layer ID: {layer_id}")
         
         layer_info = self.NFHL_LAYERS[layer_id]
         
@@ -197,21 +193,13 @@ class FEMADownloader(BaseDownloader):
             gdf = self._try_rest_api_download(layer_id, aoi_bounds)
         
         if gdf is None or len(gdf) == 0:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message="No data found for this layer and AOI"
-            )
+            return self._create_error_result(layer_id, "No data found for this layer and AOI")
         
         # Clip to AOI
         clipped_gdf = clip_vector_to_aoi(gdf, aoi_gdf)
         
         if clipped_gdf is None or len(clipped_gdf) == 0:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message="No features found within AOI after clipping"
-            )
+            return self._create_error_result(layer_id, "No features found within AOI after clipping")
         
         # Save the clipped data
         try:
@@ -220,22 +208,21 @@ class FEMADownloader(BaseDownloader):
             output_file = os.path.join(output_path, f"{safe_name}_clipped.shp")
             clipped_gdf.to_file(output_file)
             
-            return DownloadResult(
-                success=True,
+            file_size = os.path.getsize(output_file) if os.path.exists(output_file) else None
+            metadata = {"original_features": len(gdf), "clipped_features": len(clipped_gdf)}
+            
+            return self._create_success_result(
                 layer_id=layer_id,
-                feature_count=len(clipped_gdf),
                 file_path=output_file,
-                metadata={"original_features": len(gdf), "clipped_features": len(clipped_gdf)}
+                feature_count=len(clipped_gdf),
+                file_size_bytes=file_size,
+                metadata=metadata
             )
             
         except Exception as e:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message=f"Error saving layer: {str(e)}"
-            )
+            return self._create_error_result(layer_id, f"Error saving layer: {str(e)}")
     
-    def _try_wfs_download(self, layer_id: str, aoi_bounds: Tuple[float, float, float, float]) -> gpd.GeoDataFrame:
+    def _try_wfs_download(self, layer_id: str, aoi_bounds: Tuple[float, float, float, float]) -> Optional[gpd.GeoDataFrame]:
         """Try downloading via WFS (only works for certain layers)"""
         
         # Only certain layers support WFS - primarily flood hazard zones
@@ -268,7 +255,7 @@ class FEMADownloader(BaseDownloader):
         
         return None
     
-    def _try_rest_api_download(self, layer_id: str, aoi_bounds: Tuple[float, float, float, float]) -> gpd.GeoDataFrame:
+    def _try_rest_api_download(self, layer_id: str, aoi_bounds: Tuple[float, float, float, float]) -> Optional[gpd.GeoDataFrame]:
         """Try downloading via REST API"""
         
         minx, miny, maxx, maxy = aoi_bounds
@@ -292,7 +279,7 @@ class FEMADownloader(BaseDownloader):
         
         return None
     
-    def _process_geojson_response(self, response) -> gpd.GeoDataFrame:
+    def _process_geojson_response(self, response) -> Optional[gpd.GeoDataFrame]:
         """Process GeoJSON response from REST API"""
         try:
             gdf = gpd.read_file(io.StringIO(response.text))
@@ -300,7 +287,7 @@ class FEMADownloader(BaseDownloader):
         except Exception:
             return None
     
-    def _process_zip_response(self, response) -> gpd.GeoDataFrame:
+    def _process_zip_response(self, response) -> Optional[gpd.GeoDataFrame]:
         """Process ZIP response from WFS"""
         try:
             with tempfile.TemporaryDirectory() as temp_dir:

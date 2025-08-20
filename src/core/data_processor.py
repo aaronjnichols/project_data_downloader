@@ -10,9 +10,9 @@ import geopandas as gpd
 from pathlib import Path
 import logging
 
-from core.aoi_manager import AOIManager
-from core.base_downloader import DownloadResult
-from utils.spatial_utils import clip_vector_to_aoi, clip_raster_to_aoi, validate_geometry, safe_file_name
+from src.core.aoi_manager import AOIManager
+from src.core.base_downloader import DownloadResult
+from src.utils.spatial_utils import clip_vector_to_aoi, clip_raster_to_aoi, validate_geometry, safe_file_name
 
 logger = logging.getLogger(__name__)
 

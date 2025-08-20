@@ -26,7 +26,7 @@ from api.models import (
     GPTDataResponse, DataPreviewResponse, DataSummary, DownloadLinks, UnifiedDataResponse
 )
 from api.job_manager import job_manager, JobStatus
-from downloaders import get_downloader, list_downloaders
+from src.downloaders import get_downloader, list_downloaders
 
 # Configure logging
 logging.basicConfig(

@@ -3,11 +3,11 @@ import os
 import json
 import zipfile
 import logging
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, Any
 
-from core.base_downloader import BaseDownloader, LayerInfo, DownloadResult
-from utils.download_utils import DownloadSession, validate_response_content
-from utils.spatial_utils import safe_file_name, dem_to_contours, clip_raster_to_aoi
+from src.core.base_downloader import BaseDownloader, LayerInfo, DownloadResult
+from src.utils.download_utils import DownloadSession, validate_response_content
+from src.utils.spatial_utils import safe_file_name, dem_to_contours, clip_raster_to_aoi
 
 
 class USGSLidarDownloader(BaseDownloader):
@@ -21,7 +21,7 @@ class USGSLidarDownloader(BaseDownloader):
         data_type="Raster",
     )
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         self.base_url = "https://tnmaccess.nationalmap.gov/api/v1/products"
         self.session = DownloadSession(
@@ -45,12 +45,8 @@ class USGSLidarDownloader(BaseDownloader):
     def download_layer(
         self, layer_id: str, aoi_bounds: Tuple[float, float, float, float], output_path: str, **kwargs
     ) -> DownloadResult:
-        if layer_id != "dem":
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message=f"Unsupported layer {layer_id}",
-            )
+        if not self._validate_layer_id(layer_id):
+            return self._create_error_result(layer_id, f"Unsupported layer {layer_id}")
 
         minx, miny, maxx, maxy = aoi_bounds
         # Try different DEM datasets in order of preference (highest resolution DEMs first)
@@ -95,11 +91,7 @@ class USGSLidarDownloader(BaseDownloader):
                     continue
 
         if not items:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message="No DEM available for AOI in any dataset",
-            )
+            return self._create_error_result(layer_id, "No DEM available for AOI in any dataset")
         
         # Log which dataset was found
         import logging
@@ -121,11 +113,7 @@ class USGSLidarDownloader(BaseDownloader):
         try:
             download_url = best_item.get("downloadURL") or best_item.get("urls", {}).get("downloadURL")
             if not download_url:
-                return DownloadResult(
-                    success=False,
-                    layer_id=layer_id,
-                    error_message="Download URL not found",
-                )
+                return self._create_error_result(layer_id, "Download URL not found")
             
             # Determine if this is LiDAR point cloud data
             format_type = best_item.get('format', '').upper()
@@ -133,11 +121,7 @@ class USGSLidarDownloader(BaseDownloader):
             logger.info(f"Data type detected: {'LiDAR Point Cloud' if is_lidar else 'DEM Raster'}")
             
         except Exception as e:
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message=f"Invalid API response: {e}",
-            )
+            return self._create_error_result(layer_id, f"Invalid API response: {e}")
 
         os.makedirs(output_path, exist_ok=True)
         
@@ -170,11 +154,7 @@ class USGSLidarDownloader(BaseDownloader):
             is_zip = True
 
         if not self.session.download_file(download_url, download_path):
-            return DownloadResult(
-                success=False,
-                layer_id=layer_id,
-                error_message="DEM download failed",
-            )
+            return self._create_error_result(layer_id, "DEM download failed")
 
         # Handle ZIP files
         if is_zip:
@@ -194,21 +174,13 @@ class USGSLidarDownloader(BaseDownloader):
                     os.rename(download_path, tiff_path)
                 is_zip = False
             except Exception as e:
-                return DownloadResult(
-                    success=False,
-                    layer_id=layer_id,
-                    error_message=f"Error extracting data: {e}",
-                )
+                return self._create_error_result(layer_id, f"Error extracting data: {e}")
 
         # Handle LiDAR point cloud files
         if file_type == 'lidar':
             lidar_files = [f for f in os.listdir(output_path) if f.lower().endswith((".las", ".laz"))]
             if not lidar_files:
-                return DownloadResult(
-                    success=False,
-                    layer_id=layer_id,
-                    error_message="No LiDAR file found after download",
-                )
+                return self._create_error_result(layer_id, "No LiDAR file found after download")
             
             lidar_path = os.path.join(output_path, lidar_files[0])
             logger.info(f"LiDAR file ready: {lidar_path} ({os.path.getsize(lidar_path) / (1024*1024):.1f} MB)")
@@ -220,17 +192,20 @@ class USGSLidarDownloader(BaseDownloader):
                 "note": "Raw LiDAR point cloud data - highest resolution available"
             }
             
-            return DownloadResult(success=True, layer_id=layer_id, file_path=lidar_path, metadata=metadata)
+            file_size = os.path.getsize(lidar_path) if os.path.exists(lidar_path) else None
+            return self._create_success_result(
+                layer_id=layer_id,
+                file_path=lidar_path,
+                feature_count=0,  # Point cloud feature count not applicable
+                file_size_bytes=file_size,
+                metadata=metadata
+            )
         
         # Handle raster DEM files
         else:
             dem_files = [f for f in os.listdir(output_path) if f.lower().endswith((".tif", ".tiff", ".img"))]
             if not dem_files:
-                return DownloadResult(
-                    success=False,
-                    layer_id=layer_id,
-                    error_message="No DEM file found after download",
-                )
+                return self._create_error_result(layer_id, "No DEM file found after download")
 
             dem_path = os.path.join(output_path, dem_files[0])
             logger.info(f"DEM file ready: {dem_path} ({os.path.getsize(dem_path) / (1024*1024):.1f} MB)")
@@ -238,11 +213,7 @@ class USGSLidarDownloader(BaseDownloader):
             # Check units and convert if needed, then clip to AOI
             processed_dem_path = self._process_dem(dem_path, output_path, **kwargs)
             if not processed_dem_path:
-                return DownloadResult(
-                    success=False,
-                    layer_id=layer_id,
-                    error_message="Failed to process DEM (clipping or unit conversion)",
-                )
+                return self._create_error_result(layer_id, "Failed to process DEM (clipping or unit conversion)")
             
             # Create organized folder structure
             dem_folder = os.path.join(output_path, "DEM")
@@ -300,9 +271,16 @@ class USGSLidarDownloader(BaseDownloader):
             # Clean up intermediate files - only keep final organized products
             self._cleanup_intermediate_files(output_path, final_dem_path)
 
-            return DownloadResult(success=True, layer_id=layer_id, file_path=final_dem_path, metadata=metadata)
+            file_size = os.path.getsize(final_dem_path) if os.path.exists(final_dem_path) else None
+            return self._create_success_result(
+                layer_id=layer_id,
+                file_path=final_dem_path,
+                feature_count=0,  # Raster data doesn't have discrete features
+                file_size_bytes=file_size,
+                metadata=metadata
+            )
 
-    def _process_dem(self, dem_path: str, output_path: str, **kwargs) -> str:
+    def _process_dem(self, dem_path: str, output_path: str, **kwargs) -> Optional[str]:
         """
         Process DEM: convert units from meters to feet if needed, then clip to AOI
         
@@ -388,7 +366,7 @@ class USGSLidarDownloader(BaseDownloader):
             logger.error(f"Error processing DEM: {e}")
             return dem_path  # Return original on error
 
-    def _cleanup_intermediate_files(self, output_path: str, final_dem_path: str):
+    def _cleanup_intermediate_files(self, output_path: str, final_dem_path: str) -> None:
         """
         Clean up intermediate DEM files, keeping only final products
         

@@ -15,8 +15,8 @@ import geopandas as gpd
 from shapely.geometry import shape, box
 
 from api.models import JobStatus, JobRequest, DownloadResult as APIDownloadResult
-from core.base_downloader import DownloadResult
-from downloaders import get_downloader, list_downloaders
+from src.core.base_downloader import DownloadResult
+from src.downloaders import get_downloader, list_downloaders
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.pdf_utils import generate_precipitation_pdf
+from src.utils.pdf_utils import generate_precipitation_pdf
 
 def test_pdf_layout():
     """Test the improved PDF layout"""
