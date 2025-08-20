@@ -265,7 +265,8 @@ Downloaded: {download_date} | Source: NOAA Atlas 14 PFDS Volume 1 Version 5"""
         """Convert duration strings to hours for plotting"""
         hours = []
         for duration in durations:
-            duration = duration.lower()
+            # Ensure duration is a string (handle both string and numeric values)
+            duration = str(duration).lower()
             if 'min' in duration:
                 mins = float(duration.replace('-min', '').replace('min', ''))
                 hours.append(mins / 60.0)
