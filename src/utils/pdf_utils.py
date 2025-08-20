@@ -223,7 +223,9 @@ class NOAAPrecipitationReport:
         # Format download date
         try:
             if download_date != 'Unknown':
-                dt = datetime.strptime(download_date, '%Y%m%d_%H%M%S')
+                # Ensure download_date is a string
+                download_date_str = str(download_date)
+                dt = datetime.strptime(download_date_str, '%Y%m%d_%H%M%S')
                 download_date = dt.strftime('%Y-%m-%d %H:%M UTC')
         except:
             pass
