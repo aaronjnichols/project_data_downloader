@@ -18,14 +18,22 @@ data_sources:
       timeout: 60
       prefer_wfs: true
   
-  # Future data sources (not yet implemented)
   usgs_lidar:
-    enabled: false
+    enabled: true
     layers: ["dem"]
     config:
-      contour_interval: 10
+      contour_interval: 5  # Contour interval in feet
+      generate_contours: true
+      export_formats: ["shapefile", "dxf"]
       max_retries: 3
-      timeout: 60
+      timeout: 300
+  
+  noaa_atlas14:
+    enabled: false
+    layers: ["pds_depth_english"]  # Options: pds_depth_english, pds_intensity_english, ams_depth_english, etc.
+    config:
+      max_retries: 3
+      timeout: 30
   
   nlcd:
     enabled: false
