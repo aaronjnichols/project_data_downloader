@@ -273,10 +273,18 @@ Downloaded: {download_date} | Source: NOAA Atlas 14 PFDS Volume 1 Version 5"""
         # Headers
         headers = ['Duration'] + [col.replace('_year', '-yr') for col in df.columns if '_year' in col]
         
-        # Data rows
+        # Data rows - filter out metadata rows and only include valid duration data
         data = []
         for _, row in df.iterrows():
-            row_data = [row['Duration']]
+            duration = str(row['Duration']).strip()
+            
+            # Skip metadata rows and empty rows
+            if (duration in ['Location', 'Data Type', 'Units', ''] or 
+                pd.isna(duration) or 
+                not self._is_valid_duration(duration)):
+                continue
+                
+            row_data = [duration]
             for col in df.columns:
                 if '_year' in col:
                     value = row[col]
@@ -293,6 +301,13 @@ Downloaded: {download_date} | Source: NOAA Atlas 14 PFDS Volume 1 Version 5"""
             data.append(row_data)
         
         return {'headers': headers, 'data': data}
+    
+    def _is_valid_duration(self, duration: str) -> bool:
+        """Check if a duration string represents valid precipitation duration data"""
+        duration = str(duration).lower().strip()
+        # Valid durations should contain time units and numeric values
+        valid_patterns = ['min', 'hr', 'day']
+        return any(pattern in duration for pattern in valid_patterns) and any(char.isdigit() for char in duration)
     
     def _convert_durations_to_hours(self, durations: List[str]) -> List[float]:
         """Convert duration strings to hours for plotting"""
