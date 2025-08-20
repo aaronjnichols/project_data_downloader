@@ -1,6 +1,9 @@
 @echo off
 echo Starting Geospatial Data Downloader...
 
+REM Change to app directory
+cd app
+
 REM Check if virtual environment exists
 if not exist "venv" (
     echo Creating virtual environment...

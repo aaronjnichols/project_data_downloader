@@ -24,7 +24,11 @@
       "Bash(make test-unit:*)",
       "Bash(git pull:*)",
       "Bash(cp:*)",
-      "Bash(true)"
+      "Bash(true)",
+      "Bash(dir)",
+      "Bash(GeospatialDataDownloader.exe)",
+      "Bash(C:_codeproject_data_downloaderdistGeospatialDataDownloaderGeospatialDataDownloader.exe)",
+      "Bash(git rm:*)"
     ],
     "defaultMode": "acceptEdits"
   }
