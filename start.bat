@@ -1,5 +1,5 @@
 @echo off
-echo Setting up Geospatial Data Downloader...
+echo Starting Geospatial Data Downloader...
 
 REM Check if virtual environment exists
 if not exist "venv" (
@@ -11,31 +11,22 @@ REM Activate virtual environment
 echo Activating virtual environment...
 call venv\Scripts\activate.bat
 
-REM Install dependencies
-echo Installing dependencies...
-pip install -e .
-
-REM Check if we should run API or Streamlit
-echo.
-echo Choose how to run the application:
-echo 1. REST API Server (localhost:8000)
-echo 2. Streamlit Web Interface (localhost:8501)
-echo 3. Exit
-echo.
-set /p choice="Enter your choice (1-3): "
-
-if "%choice%"=="1" (
-    echo Starting FastAPI server...
-    python api/main.py
-) else if "%choice%"=="2" (
-    echo Starting Streamlit web interface...
-    streamlit run streamlit_app.py
-) else if "%choice%"=="3" (
-    echo Exiting...
-    exit /b 0
+REM Check if dependencies are installed (quick check for key packages)
+echo Checking dependencies...
+python -c "import streamlit, geopandas, matplotlib, ezdxf" 2>nul
+if errorlevel 1 (
+    echo Installing dependencies...
+    pip install -e .
 ) else (
-    echo Invalid choice. Starting Streamlit by default...
-    streamlit run streamlit_app.py
+    echo Dependencies already installed.
 )
 
-pause
+REM Start Streamlit web interface automatically
+echo.
+echo Opening Streamlit web interface...
+echo The app will open in your default web browser at http://localhost:8501
+echo.
+echo Press Ctrl+C to stop the application when you're done.
+echo.
+
+streamlit run streamlit_app.py
