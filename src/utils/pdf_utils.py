@@ -63,17 +63,31 @@ class NOAAPrecipitationReport:
             
             # Create PDF
             with PdfPages(output_pdf_path) as pdf:
-                # Page 1: Data table and metadata
-                self._create_data_table_page(pdf, df, metadata)
+                try:
+                    # Page 1: Data table and metadata
+                    logger.info("Creating data table page...")
+                    self._create_data_table_page(pdf, df, metadata)
+                    logger.info("Data table page created successfully")
+                except Exception as e:
+                    logger.error(f"Error creating data table page: {e}")
+                    raise
                 
-                # Page 2: DDF curves
-                self._create_ddf_curves_page(pdf, df, metadata)
+                try:
+                    # Page 2: DDF curves
+                    logger.info("Creating DDF curves page...")
+                    self._create_ddf_curves_page(pdf, df, metadata)
+                    logger.info("DDF curves page created successfully")
+                except Exception as e:
+                    logger.error(f"Error creating DDF curves page: {e}")
+                    raise
             
             logger.info(f"Successfully generated precipitation frequency report: {output_pdf_path}")
             return True
             
         except Exception as e:
             logger.error(f"Error generating precipitation frequency report: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
     
     def _create_data_table_page(self, pdf: PdfPages, df: pd.DataFrame, metadata: Dict):
@@ -163,9 +177,17 @@ class NOAAPrecipitationReport:
             col_name = f"{rp}_year"
             if col_name in df.columns:
                 values = df[col_name].values
-                color = self.return_period_colors.get(rp, '#333333')
-                ax1.plot(duration_hours, values, 'o-', color=color, linewidth=1.5, 
-                        markersize=3, label=f'{rp}')
+                # Ensure values are numeric (convert any strings to float, drop NaN)
+                values = pd.to_numeric(values, errors='coerce')
+                # Remove any NaN values by masking both arrays
+                valid_mask = ~pd.isna(values)
+                values = values[valid_mask]
+                valid_duration_hours = np.array(duration_hours)[valid_mask]
+                
+                if len(values) > 0:  # Only plot if we have valid data
+                    color = self.return_period_colors.get(rp, '#333333')
+                    ax1.plot(valid_duration_hours, values, 'o-', color=color, linewidth=1.5, 
+                            markersize=3, label=f'{rp}')
         
         ax1.set_xlabel('Duration', fontsize=9)
         ax1.set_ylabel('Precipitation depth (in)', fontsize=9)
@@ -184,14 +206,23 @@ class NOAAPrecipitationReport:
         
         for i, duration in enumerate(durations):
             values = []
+            valid_return_periods = []
             for rp in return_periods:
                 col_name = f"{rp}_year"
                 if col_name in df.columns:
-                    values.append(df.loc[df['Duration'] == duration, col_name].iloc[0])
+                    try:
+                        raw_value = df.loc[df['Duration'] == duration, col_name].iloc[0]
+                        # Ensure value is numeric
+                        numeric_value = pd.to_numeric(raw_value, errors='coerce')
+                        if not pd.isna(numeric_value):
+                            values.append(numeric_value)
+                            valid_return_periods.append(rp)
+                    except (IndexError, ValueError):
+                        continue
             
-            if values:
+            if values and len(values) > 0:
                 color = self.duration_colors[i % len(self.duration_colors)]
-                ax2.plot(return_periods, values, 'o-', color=color, linewidth=1.2, 
+                ax2.plot(valid_return_periods, values, 'o-', color=color, linewidth=1.2, 
                         markersize=2.5, label=duration)
         
         ax2.set_xlabel('Average recurrence interval (years)', fontsize=9)
