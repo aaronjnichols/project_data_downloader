@@ -41,10 +41,13 @@ A Python application for automatically downloading geospatial data from multiple
    cd project_data_downloader
    ```
 
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. **Set up the environment (Windows):**
+   - Double-click `setup.bat` to automatically create virtual environment and install all dependencies
+   - Or manually run: `python -m venv venv && venv\Scripts\activate && pip install -e .`
+
+3. **Start the application:**
+   - Double-click `start.bat` for instant Streamlit web interface
+   - Or run: `streamlit run streamlit_app.py`
 
 ### Basic Usage
 
