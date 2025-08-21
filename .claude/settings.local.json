@@ -36,7 +36,8 @@
       "Bash(\"venv\\Scripts\\python.exe\" -c \"import skimage; print(''scikit-image version:'', skimage.__version__)\")",
       "Bash(\"venv\\Scripts\\pip.exe\" install scikit-image)",
       "Bash(\"venv\\Scripts\\pip.exe\" install -e .)",
-      "Bash(call venvScriptsactivate.bat)"
+      "Bash(call venvScriptsactivate.bat)",
+      "Bash(\"venv\\Scripts\\python.exe\":*)"
     ],
     "defaultMode": "acceptEdits"
   }
