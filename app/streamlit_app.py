@@ -378,6 +378,9 @@ def display_simple_data_selection(sources):
                             key=f"contours_{source_id}"
                         )
                     
+                        # Always add the generate_contours flag
+                        all_config_options['generate_contours'] = generate_contours
+                        
                         if generate_contours:
                             contour_interval = st.number_input(
                                 "Contour Interval (feet)",

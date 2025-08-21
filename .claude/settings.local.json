@@ -28,7 +28,15 @@
       "Bash(dir)",
       "Bash(GeospatialDataDownloader.exe)",
       "Bash(C:_codeproject_data_downloaderdistGeospatialDataDownloaderGeospatialDataDownloader.exe)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(cmd //c:*)",
+      "Bash(\"venv\\Scripts\\python.exe\" -c \"from api.job_manager import job_manager; print(''JobManager initialized successfully''); print(''Jobs dir:'', job_manager.jobs_dir); print(''Results dir:'', job_manager.results_dir); print(''Jobs dir exists:'', job_manager.jobs_dir.exists()); print(''Results dir exists:'', job_manager.results_dir.exists())\")",
+      "Bash(timeout:*)",
+      "Bash(cmd /c:*)",
+      "Bash(\"venv\\Scripts\\python.exe\" -c \"import skimage; print(''scikit-image version:'', skimage.__version__)\")",
+      "Bash(\"venv\\Scripts\\pip.exe\" install scikit-image)",
+      "Bash(\"venv\\Scripts\\pip.exe\" install -e .)",
+      "Bash(call venvScriptsactivate.bat)"
     ],
     "defaultMode": "acceptEdits"
   }
