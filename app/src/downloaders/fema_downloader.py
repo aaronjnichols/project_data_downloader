@@ -1,6 +1,7 @@
 """
 FEMA NFHL (National Flood Hazard Layer) downloader plugin.
 Downloads all available FEMA spatial data layers from the NFHL service.
+Enhanced with automatic flood analysis for flood hazard zones.
 """
 import os
 import io
@@ -8,10 +9,13 @@ import tempfile
 import zipfile
 from typing import Dict, Tuple, Optional, Any
 import geopandas as gpd
+import logging
 
 from src.core.base_downloader import BaseDownloader, LayerInfo, DownloadResult
 from src.utils.download_utils import DownloadSession, extract_zip_response, validate_response_content
 from src.utils.spatial_utils import clip_vector_to_aoi, safe_file_name
+
+logger = logging.getLogger(__name__)
 
 
 class FEMADownloader(BaseDownloader):
@@ -211,6 +215,30 @@ class FEMADownloader(BaseDownloader):
             file_size = os.path.getsize(output_file) if os.path.exists(output_file) else None
             metadata = {"original_features": len(gdf), "clipped_features": len(clipped_gdf)}
             
+            # Generate flood analysis summary for flood hazard zones (layer 28)
+            # OR if we just downloaded FIRM panels and flood zones already exist
+            should_analyze = False
+            analysis_reason = ""
+            
+            if layer_id == "28":  # Flood Hazard Zones downloaded
+                should_analyze = True
+                analysis_reason = "Flood zones downloaded"
+            elif layer_id == "3":  # FIRM Panels downloaded, check if flood zones exist
+                flood_zones_path = os.path.join(output_path, "Flood_Hazard_Zones_clipped.shp")
+                if os.path.exists(flood_zones_path):
+                    should_analyze = True
+                    analysis_reason = "FIRM panels downloaded and flood zones exist"
+                    # Load flood zones for analysis
+                    clipped_gdf = gpd.read_file(flood_zones_path)
+            
+            if should_analyze:
+                try:
+                    print(f"Generating flood analysis: {analysis_reason}")
+                    self._generate_flood_analysis_summary(clipped_gdf, aoi_gdf, output_path)
+                except Exception as e:
+                    # Don't fail the download if analysis fails, just log the error
+                    print(f"Warning: Could not generate flood analysis summary: {e}")
+            
             return self._create_success_result(
                 layer_id=layer_id,
                 file_path=output_file,
@@ -305,3 +333,74 @@ class FEMADownloader(BaseDownloader):
                 
         except (zipfile.BadZipFile, Exception):
             return None 
+    
+    def _generate_flood_analysis_summary(self, fema_gdf: gpd.GeoDataFrame, aoi_gdf: gpd.GeoDataFrame, output_path: str):
+        """Generate flood analysis summary for downloaded flood zones"""
+        
+        try:
+            import json
+            # Import the analysis modules
+            from src.analysis import FloodAnalyzer
+            
+            # Initialize the flood analyzer
+            flood_analyzer = FloodAnalyzer()
+            
+            # Try to find existing FIRM panels data first, then download if needed
+            firm_panels_gdf = None
+            
+            # First, check if FIRM panels already exist in the same output directory
+            firm_panels_path = os.path.join(output_path, "FIRM_Panels_clipped.shp")
+            if os.path.exists(firm_panels_path):
+                try:
+                    logger.info(f"Found existing FIRM panels file: {firm_panels_path}")
+                    firm_panels_gdf = gpd.read_file(firm_panels_path)
+                    logger.info(f"Loaded {len(firm_panels_gdf)} FIRM panel features from existing file")
+                except Exception as e:
+                    logger.warning(f"Error reading existing FIRM panels file: {e}")
+                    firm_panels_gdf = None
+            
+            # If no existing file, try to download FIRM panels data
+            if firm_panels_gdf is None:
+                try:
+                    # Get AOI bounds for FIRM panels download
+                    bounds = aoi_gdf.total_bounds  # [minx, miny, maxx, maxy]
+                    aoi_bounds = tuple(bounds)
+                    logger.info(f"Attempting to download FIRM panels for analysis")
+                    
+                    # Download FIRM panels (layer 3) for the same AOI
+                    firm_panels_gdf = self._try_rest_api_download("3", aoi_bounds)
+                    if firm_panels_gdf is not None and len(firm_panels_gdf) > 0:
+                        # Clip FIRM panels to AOI
+                        from src.utils.spatial_utils import clip_vector_to_aoi
+                        firm_panels_gdf = clip_vector_to_aoi(firm_panels_gdf, aoi_gdf)
+                        if firm_panels_gdf is not None and len(firm_panels_gdf) > 0:
+                            logger.info(f"Downloaded and clipped {len(firm_panels_gdf)} FIRM panel features for analysis")
+                        else:
+                            logger.info("No FIRM panels found within AOI after clipping")
+                            firm_panels_gdf = None
+                    else:
+                        logger.info("No FIRM panels data available for download")
+                        firm_panels_gdf = None
+                except Exception as e:
+                    logger.warning(f"Could not download FIRM panels data: {e}")
+                    firm_panels_gdf = None
+            
+            # Perform flood analysis with FIRM panels data if available
+            flood_result = flood_analyzer.analyze_flood_zones(aoi_gdf, fema_gdf, firm_panels_gdf)
+            
+            # Generate JSON report (better for LLM consumption)
+            json_report = flood_analyzer.generate_json_report(flood_result)
+            
+            # Save JSON summary to output directory
+            json_filename = "FEMA_Flood_Analysis.json"
+            json_path = os.path.join(output_path, json_filename)
+            
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(json_report, f, indent=2, ensure_ascii=False)
+            
+            print(f"Flood analysis JSON saved: {json_filename}")
+            
+        except ImportError as e:
+            print(f"Warning: Analysis module not available: {e}")
+        except Exception as e:
+            print(f"Warning: Error generating flood analysis: {e}")
