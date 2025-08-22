@@ -304,21 +304,13 @@ class FloodAnalyzer:
                     from src.utils.date_utils import convert_esri_date
                     effective_date = convert_esri_date(row['EFF_DATE'])
                 
-                if 'pre_date_r' in row and pd.notna(row['pre_date_r']):
-                    preliminary_date = str(row['pre_date_r'])
-                elif 'preliminary_date' in row and pd.notna(row['preliminary_date']):  # Fallback for old name
-                    preliminary_date = str(row['preliminary_date'])
-                elif 'PRE_DATE' in row and pd.notna(row['PRE_DATE']):
-                    from src.utils.date_utils import convert_esri_date
-                    preliminary_date = convert_esri_date(row['PRE_DATE'])
-                
                 if 'PANEL_TYP' in row and pd.notna(row['PANEL_TYP']):
                     panel_type = str(row['PANEL_TYP'])
                 
                 firm_panels.append(FirmPanelInfo(
                     panel_id=str(panel_id),
                     effective_date=effective_date,
-                    preliminary_date=preliminary_date,
+                    preliminary_date=None,  # No longer extracting preliminary dates
                     panel_type=panel_type
                 ))
         

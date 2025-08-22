@@ -348,8 +348,7 @@ class FEMADownloader(BaseDownloader):
             
             # Define date columns to convert - use short names for shapefile compatibility (max 10 chars)
             date_columns = {
-                'EFF_DATE': 'eff_date_r',    # readable effective date
-                'PRE_DATE': 'pre_date_r'     # readable preliminary date
+                'EFF_DATE': 'eff_date_r'     # readable effective date only
             }
             
             # Add readable date columns
