@@ -8,13 +8,14 @@ This module provides the core analysis engine for calculating:
 - AOI-based spatial analysis
 """
 
-from .flood_analyzer import FloodAnalyzer, FloodAnalysisResult, FloodZoneStats
+from .flood_analyzer import FloodAnalyzer, FloodAnalysisResult, FloodZoneStats, FirmPanelInfo
 from .dashboard_calculator import DashboardCalculator, AnalysisInputs, DashboardAnalysisResult
 
 __all__ = [
     'FloodAnalyzer', 
     'FloodAnalysisResult', 
     'FloodZoneStats',
+    'FirmPanelInfo',
     'DashboardCalculator', 
     'AnalysisInputs', 
     'DashboardAnalysisResult'

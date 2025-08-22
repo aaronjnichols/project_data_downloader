@@ -205,6 +205,10 @@ class FEMADownloader(BaseDownloader):
         if clipped_gdf is None or len(clipped_gdf) == 0:
             return self._create_error_result(layer_id, "No features found within AOI after clipping")
         
+        # Convert date fields for FIRM Panels (layer 3) to readable format
+        if layer_id == "3":  # FIRM Panels
+            self._convert_firm_panel_dates(clipped_gdf)
+        
         # Save the clipped data
         try:
             os.makedirs(output_path, exist_ok=True)
@@ -219,22 +223,24 @@ class FEMADownloader(BaseDownloader):
             # OR if we just downloaded FIRM panels and flood zones already exist
             should_analyze = False
             analysis_reason = ""
+            analysis_gdf = None  # Will hold the flood zones data for analysis
             
             if layer_id == "28":  # Flood Hazard Zones downloaded
                 should_analyze = True
                 analysis_reason = "Flood zones downloaded"
+                analysis_gdf = clipped_gdf  # Use the current flood zones data
             elif layer_id == "3":  # FIRM Panels downloaded, check if flood zones exist
                 flood_zones_path = os.path.join(output_path, "Flood_Hazard_Zones_clipped.shp")
                 if os.path.exists(flood_zones_path):
                     should_analyze = True
                     analysis_reason = "FIRM panels downloaded and flood zones exist"
-                    # Load flood zones for analysis
-                    clipped_gdf = gpd.read_file(flood_zones_path)
+                    # Load flood zones for analysis (don't overwrite clipped_gdf which has FIRM panels)
+                    analysis_gdf = gpd.read_file(flood_zones_path)
             
-            if should_analyze:
+            if should_analyze and analysis_gdf is not None:
                 try:
                     print(f"Generating flood analysis: {analysis_reason}")
-                    self._generate_flood_analysis_summary(clipped_gdf, aoi_gdf, output_path)
+                    self._generate_flood_analysis_summary(analysis_gdf, aoi_gdf, output_path)
                 except Exception as e:
                     # Don't fail the download if analysis fails, just log the error
                     print(f"Warning: Could not generate flood analysis summary: {e}")
@@ -333,6 +339,29 @@ class FEMADownloader(BaseDownloader):
                 
         except (zipfile.BadZipFile, Exception):
             return None 
+    
+    def _convert_firm_panel_dates(self, firm_gdf: gpd.GeoDataFrame):
+        """Convert FIRM panel date fields from Unix timestamps to readable dates"""
+        
+        try:
+            from src.utils.date_utils import add_readable_date_columns
+            
+            # Define date columns to convert - use short names for shapefile compatibility (max 10 chars)
+            date_columns = {
+                'EFF_DATE': 'eff_date_r',    # readable effective date
+                'PRE_DATE': 'pre_date_r'     # readable preliminary date
+            }
+            
+            # Add readable date columns
+            add_readable_date_columns(firm_gdf, date_columns)
+            
+            logger.info("Converted FIRM panel date fields to readable format")
+            logger.info(f"Added columns: {list(date_columns.values())}")
+            
+        except ImportError as e:
+            logger.warning(f"Could not import date utilities: {e}")
+        except Exception as e:
+            logger.warning(f"Error converting FIRM panel dates: {e}")
     
     def _generate_flood_analysis_summary(self, fema_gdf: gpd.GeoDataFrame, aoi_gdf: gpd.GeoDataFrame, output_path: str):
         """Generate flood analysis summary for downloaded flood zones"""

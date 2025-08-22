@@ -43,6 +43,15 @@ class FloodZoneStats:
 
 
 @dataclass
+class FirmPanelInfo:
+    """Data class for FIRM panel information"""
+    panel_id: str
+    effective_date: Optional[str] = None
+    preliminary_date: Optional[str] = None
+    panel_type: Optional[str] = None
+
+
+@dataclass
 class FloodAnalysisResult:
     """Complete flood analysis results"""
     total_aoi_area_sqft: float
@@ -51,7 +60,7 @@ class FloodAnalysisResult:
     sfha_area_acres: float
     sfha_percentage: float
     zone_stats: List[FloodZoneStats]
-    firm_panels: List[str]
+    firm_panels: List[FirmPanelInfo]
     analysis_metadata: Dict[str, Any]
 
 
@@ -245,32 +254,79 @@ class FloodAnalyzer:
         return sfha_area_sqft, sfha_area_acres, sfha_percentage
     
     def _extract_firm_panels(self, firm_panels_gdf: Optional[gpd.GeoDataFrame], 
-                            fema_data_gdf: gpd.GeoDataFrame) -> List[str]:
-        """Extract unique FIRM panel IDs from the data
+                            fema_data_gdf: gpd.GeoDataFrame) -> List[FirmPanelInfo]:
+        """Extract FIRM panel information from the data
         
         Args:
             firm_panels_gdf: Optional GeoDataFrame containing FIRM panels (preferred source)
             fema_data_gdf: GeoDataFrame containing flood zones (fallback source)
             
         Returns:
-            List of unique FIRM panel IDs
+            List of FirmPanelInfo objects with panel details
         """
         
-        # Prefer FIRM panels layer if available
+        # Prefer FIRM panels layer if available (has full metadata)
         if firm_panels_gdf is not None and len(firm_panels_gdf) > 0:
             if 'FIRM_PAN' in firm_panels_gdf.columns:
-                firm_panels = firm_panels_gdf['FIRM_PAN'].dropna().unique().tolist()
-                logger.info(f"Extracted {len(firm_panels)} FIRM panels from dedicated FIRM panels layer")
-                return sorted(firm_panels)
+                return self._extract_detailed_firm_info(firm_panels_gdf)
         
-        # Fallback to flood zones data
+        # Fallback to flood zones data (basic panel IDs only)
         if 'FIRM_PAN' in fema_data_gdf.columns:
-            firm_panels = fema_data_gdf['FIRM_PAN'].dropna().unique().tolist()
-            logger.info(f"Extracted {len(firm_panels)} FIRM panels from flood zones data")
-            return sorted(firm_panels)
+            firm_panel_ids = fema_data_gdf['FIRM_PAN'].dropna().unique().tolist()
+            logger.info(f"Extracted {len(firm_panel_ids)} FIRM panel IDs from flood zones data (no dates available)")
+            return [FirmPanelInfo(panel_id=panel_id) for panel_id in sorted(firm_panel_ids)]
         
         logger.warning("No FIRM panel data found in either FIRM panels layer or flood zones")
         return []
+    
+    def _extract_detailed_firm_info(self, firm_panels_gdf: gpd.GeoDataFrame) -> List[FirmPanelInfo]:
+        """Extract detailed FIRM panel information including dates"""
+        
+        firm_panels = []
+        
+        # Group by panel ID to get unique panels
+        if 'FIRM_PAN' in firm_panels_gdf.columns:
+            panel_groups = firm_panels_gdf.groupby('FIRM_PAN').first()
+            
+            for panel_id, row in panel_groups.iterrows():
+                # Extract dates (prefer readable format if available, fallback to original)
+                effective_date = None
+                preliminary_date = None
+                panel_type = None
+                
+                # Check for readable date columns first (updated for shapefile-compatible names)
+                if 'eff_date_r' in row and pd.notna(row['eff_date_r']):
+                    effective_date = str(row['eff_date_r'])
+                elif 'effective_date' in row and pd.notna(row['effective_date']):  # Fallback for old name
+                    effective_date = str(row['effective_date'])
+                elif 'EFF_DATE' in row and pd.notna(row['EFF_DATE']):
+                    # Convert from timestamp if not already converted
+                    from src.utils.date_utils import convert_esri_date
+                    effective_date = convert_esri_date(row['EFF_DATE'])
+                
+                if 'pre_date_r' in row and pd.notna(row['pre_date_r']):
+                    preliminary_date = str(row['pre_date_r'])
+                elif 'preliminary_date' in row and pd.notna(row['preliminary_date']):  # Fallback for old name
+                    preliminary_date = str(row['preliminary_date'])
+                elif 'PRE_DATE' in row and pd.notna(row['PRE_DATE']):
+                    from src.utils.date_utils import convert_esri_date
+                    preliminary_date = convert_esri_date(row['PRE_DATE'])
+                
+                if 'PANEL_TYP' in row and pd.notna(row['PANEL_TYP']):
+                    panel_type = str(row['PANEL_TYP'])
+                
+                firm_panels.append(FirmPanelInfo(
+                    panel_id=str(panel_id),
+                    effective_date=effective_date,
+                    preliminary_date=preliminary_date,
+                    panel_type=panel_type
+                ))
+        
+        # Sort by panel ID
+        firm_panels.sort(key=lambda x: x.panel_id)
+        
+        logger.info(f"Extracted {len(firm_panels)} FIRM panels with detailed information")
+        return firm_panels
     
     def _get_utm_crs(self, gdf: gpd.GeoDataFrame) -> str:
         """Get appropriate UTM CRS for the given GeoDataFrame"""
@@ -372,9 +428,15 @@ class FloodAnalyzer:
         # FIRM Panels
         if result.firm_panels:
             report_lines.append("FIRM PANELS:")
-            report_lines.append("-" * 15)
+            report_lines.append("-" * 50)
+            report_lines.append(f"{'Panel ID':<15} {'Effective Date':<15} {'Type':<15}")
+            report_lines.append("-" * 50)
+            
             for panel in result.firm_panels:
-                report_lines.append(f"  • {panel}")
+                eff_date = panel.effective_date if panel.effective_date else "N/A"
+                panel_type = panel.panel_type if panel.panel_type else "N/A"
+                report_lines.append(f"{panel.panel_id:<15} {eff_date:<15} {panel_type:<15}")
+            
             report_lines.append("")
         
         # Analysis Metadata
@@ -454,8 +516,14 @@ class FloodAnalyzer:
         if result.firm_panels:
             report_lines.append("## FIRM Panels")
             report_lines.append("")
+            report_lines.append("| Panel ID | Effective Date | Panel Type |")
+            report_lines.append("|----------|---------------|------------|")
+            
             for panel in result.firm_panels:
-                report_lines.append(f"- {panel}")
+                eff_date = panel.effective_date if panel.effective_date else "N/A"
+                panel_type = panel.panel_type if panel.panel_type else "N/A"
+                report_lines.append(f"| {panel.panel_id} | {eff_date} | {panel_type} |")
+            
             report_lines.append("")
         
         # Analysis Metadata
@@ -511,7 +579,14 @@ class FloodAnalyzer:
                         "percentage_of_aoi": float(result.sfha_percentage)
                     },
                     "flood_zone_count": len(result.zone_stats),
-                    "firm_panels": [str(panel) for panel in result.firm_panels]
+                    "firm_panels": [
+                        {
+                            "panel_id": panel.panel_id,
+                            "effective_date": panel.effective_date,
+                            "preliminary_date": panel.preliminary_date,
+                            "panel_type": panel.panel_type
+                        } for panel in result.firm_panels
+                    ]
                 },
                 "flood_zones": zone_stats_data,
                 "risk_assessment": {
